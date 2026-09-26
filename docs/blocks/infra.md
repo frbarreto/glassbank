@@ -1,6 +1,6 @@
 # infra
 
-Status: GCP bootstrapped on 2026-09-26 (`bootstrap.sh` and `ci-bootstrap.sh` ran for real: runtime and deployer service accounts, the two secrets, the IAM bindings); **nothing is deployed** - `deploy.sh` has only ever run with `DRY_RUN=1`, and the demo runs on the developer's Mac behind a cloudflared quick tunnel. Next: the GitHub Actions pipeline (D-24), then the hostname (D-25).
+Status: **deployed** on 2026-09-26 by `.github/workflows/pipeline.yml` (first run: check, e2e, image and deploy green; the live smoke exposed the `/healthz` interception and the check-6 parser bug, both fixed in the same change). `bootstrap.sh` and `ci-bootstrap.sh` ran for real; `make deploy` (Cloud Build) has never run. Next: the hostname (`domain.sh`, D-25).
 
 ## Purpose
 Build, run, deploy and verify the one container: locally first (`docker compose`, cloudflared), then the Cloud Run service `mcp-bank` in `lake-fraude` / `us-central1` (D-2).
@@ -14,10 +14,11 @@ The gcloud flags live in `deploy.sh` and nowhere else.
 | `infra/bootstrap.sh` | One-time: enable the APIs, create the `mcp-bank-run` service account, Secret Manager `mcp-bank-oauth-signing-key` (`openssl rand -base64 48`) and `mcp-bank-admin-token` (`openssl rand -hex 24`), bind `secretAccessor`; idempotent; never prints a secret. Ran for real on 2026-09-26. |
 | `infra/ci-bootstrap.sh` | One-time (D-24): the deployer service account `mcp-bank-deployer` that GitHub Actions impersonates through the existing Workload Identity pool `github-pool`: `artifactregistry.writer` on the `lake-fraude` repository, `run.admin` on the project, `serviceAccountUser` on `mcp-bank-run`, `workloadIdentityUser` for `principalSet://.../attribute.repository/frbarreto/glassbank`; retries bindings through IAM propagation; prints the GitHub variables to set; idempotent; `DRY_RUN=1`. Ran for real on 2026-09-26. |
 | `.github/workflows/pipeline.yml` | GitHub Actions (D-22 to D-24, `docs/DEPLOYMENT.md` section 15): `check`, `e2e`, `image` (build, boot, local smoke, SIGTERM exit check, push `mcp-bank:<sha12>` on `main`), `deploy` (`SKIP_BUILD=1 ./infra/deploy.sh`, then `smoke.sh`, job summary). Push to `main` deploys; `pull_request` never; `workflow_dispatch` redeploys an `image_tag` and sets `origin_policy`. Keyless through `mcp-bank-deployer`. |
+| `infra/domain.sh` | D-25: `gcloud beta run domain-mappings create` for `DOMAIN` (default `glassbank-mcp.abovethefog.app`) in `lake-fraude`, then the one CNAME record in Cloud DNS zone `abovethefog-app` (project `abovethefog`); refuses the apex and `www`; `status` prints certificate provisioning; `DRY_RUN=1`. |
 | `infra/pause.sh` | `pause` deletes the service (stops the bill); `resume` redeploys the newest Artifact Registry image (or `RESUME_TAG`) through `deploy.sh`; `make pause` / `make resume`; `DRY_RUN=1`. |
 | `infra/deploy.sh` | Cloud Build into Artifact Registry `lake-fraude`, `gcloud run deploy` with the canonical flags, then the `status.url` / `PUBLIC_HOSTS` correction. |
-| `infra/smoke.sh [BASE_URL]` | Ten checks: DNS, no cross-host redirect, the 401 challenge, discovery on every host, `/healthz`, Cloud Run invariants, public IAM, discovery latency, 30x `/register` without a 429, dashboard served. |
-| `infra/local/docker-compose.yml` | The production image on the Mac with `NODE_ENV=production`, every knob as an env passthrough, SQLite on a named volume, 1 CPU / 1 GiB, a `/healthz` probe, 15 s stop grace. |
+| `infra/smoke.sh [BASE_URL]` | Ten checks: DNS, no cross-host redirect, the 401 challenge, discovery on every host, `/health`, Cloud Run invariants, public IAM, discovery latency, 30x `/register` without a 429, dashboard served. |
+| `infra/local/docker-compose.yml` | The production image on the Mac with `NODE_ENV=production`, every knob as an env passthrough, SQLite on a named volume, 1 CPU / 1 GiB, a `/health` probe, 15 s stop grace. |
 | `infra/local/cloudflared.md` | Exposing `localhost:8080` over HTTPS: `cloudflared tunnel --url http://localhost:8080`, then restart with the tunnel host in `PUBLIC_BASE_URL` and `PUBLIC_HOSTS`. |
 | `infra/vm/README.md` | The Compute Engine alternative (`laf-ingestor`, D-7): gcloud steps, Docker install, run, verify, trade-offs, what is unverified. |
 | `infra/vm/docker-compose.yml` | Caddy 2.11 in front of the app on a private network; `PUBLIC_BASE_URL`, `PUBLIC_HOSTS` and `OAUTH_SIGNING_KEY` are required. |
@@ -58,10 +59,10 @@ DRY_RUN=1 ./infra/pause.sh pause               # prints the delete; `resume` pri
 ruby -ryaml -e 'YAML.load_file(".github/workflows/pipeline.yml")'   # the workflow parses
 git push origin main                           # runs the pipeline: check, e2e, image, deploy + smoke; follow with `gh run watch`
 ```
-The cloud path (`make deploy && make smoke`) has never run.
+The cloud path has run only through the pipeline (`SKIP_BUILD=1`); `make deploy && make smoke` from the Mac has not.
 
 ## Known gaps
-- Nothing deployed: no service, secrets, service account or recorded `run.app` hostnames.
+- `make deploy` (the Cloud Build path) has never run; every deploy so far came from the pipeline.
 - `deploy.sh` does not pass `GIT_SHA` to the container, so `server.started.git_sha` would be `null` in the cloud too.
 - The local image is arm64; Cloud Build produces amd64 from the same Dockerfile, untested locally.
 - `--platform=managed` is a hidden, default flag in current gcloud.

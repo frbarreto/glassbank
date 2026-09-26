@@ -59,7 +59,7 @@ Mac then fail while external clients connect. Recover with `sudo dscacheutil -fl
 killall -HUP mDNSResponder`, or test with `curl --resolve <tunnel>.trycloudflare.com:443:<ip>`.
 
 ```bash
-curl -s https://<tunnel>.trycloudflare.com/healthz
+curl -s https://<tunnel>.trycloudflare.com/health
 # {"status":"ok","boot_id":"boot_...","version":"0.1.0","origin_policy":"log-only","uptime_s":...}
 curl -s https://<tunnel>.trycloudflare.com/.well-known/oauth-protected-resource/mcp | python3 -c "import sys,json;print(json.load(sys.stdin)['resource'])"
 # https://<tunnel>.trycloudflare.com/mcp        <- must equal the URL you will paste into the client

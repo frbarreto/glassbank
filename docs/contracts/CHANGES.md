@@ -2,6 +2,14 @@
 
 Version log for `src/contracts` (`auth.ts`, `bank.ts`, `events.ts`, `scopes.ts`, `tools.ts`, `xray-api.ts`, re-exported by `index.ts`), newest first. The contract is append-only: names are added, never renamed or removed in v1. Namespaces: `A-xx` assumption and `D-x` user decision (`docs/ASSUMPTIONS.md`), `ADR-x` architecture decision (`docs/ARCHITECTURE.md` section 9).
 
+## v0.6 - 2026-09-26 - the health path
+
+| Change | File | Producer / consumer |
+|---|---|---|
+| `XRAY_ROUTES.health = '/health'`, served by the same handler as `healthz` | `xray-api.ts` | `src/app.ts` serves both; `infra/smoke.sh`, `infra/deploy.sh`, the compose files and the pipeline use `/health`; local scripts may keep `/healthz` |
+
+Why: on the first Cloud Run deploy (2026-09-26) Google's front end answered `/healthz` (exactly that path, query string included) with its own 404 and never forwarded it, while `/healthz/` and every other path reached the app. Additive: `healthz` stays.
+
 ## v0.5 - 2026-09-09 - what the client was told
 
 | Change | File | Producer / consumer |

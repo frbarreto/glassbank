@@ -17,7 +17,7 @@
 #      `resource` matching the host queried, PRM at the root path, and AS metadata whose `issuer`
 #      matches the host queried and which advertises registration, S256, code + refresh_token
 #      and the "none" token endpoint auth method
-#   5  /healthz answers 200 and reports the active Origin policy
+#   5  /health answers 200 and reports the active Origin policy (never /healthz: Google's front end swallows it on Cloud Run)
 #   6  Cloud Run invariants: minScale 1, maxScale 1, cpu-throttling false, timeoutSeconds 3600
 #   7  Cloud Run IAM is public (allUsers)
 #   8  every discovery endpoint answers well inside Claude's 10 s budget
@@ -378,22 +378,22 @@ check_discovery_documents() {
 }
 
 # ---------------------------------------------------------------------------------------------
-# 5. /healthz
+# 5. /health
 # ---------------------------------------------------------------------------------------------
 ACTIVE_ORIGIN_POLICY=""
 check_healthz() {
-  step "5. /healthz"
+  step "5. /health"
   local code status
-  code="$(http GET "$BASE_URL/healthz")"
+  code="$(http GET "$BASE_URL/health")"
   if [ "$code" != "200" ]; then
-    fail "/healthz -> $code (expected 200)"
+    fail "/health -> $code (expected 200)"
     return
   fi
   status="$(json_string "$BODY" status)"
   if [ "$status" = "ok" ]; then
-    pass "/healthz -> 200, status=ok"
+    pass "/health -> 200, status=ok"
   else
-    fail "/healthz -> 200 but status='$status' (expected 'ok')"
+    fail "/health -> 200 but status='$status' (expected 'ok')"
   fi
   info "boot_id: $(json_string "$BODY" boot_id)  version: $(json_string "$BODY" version)"
   ACTIVE_ORIGIN_POLICY="$(json_string "$BODY" origin_policy)"
@@ -435,7 +435,10 @@ check_cloud_run_invariants() {
   min_scale="$(printf '%s\n' "$yaml" | grep -E 'autoscaling\.knative\.dev/minScale:' | head -1 | sed "s/.*: *['\"]*//; s/['\"]*$//")"
   max_scale="$(printf '%s\n' "$yaml" | grep -E 'autoscaling\.knative\.dev/maxScale:' | head -1 | sed "s/.*: *['\"]*//; s/['\"]*$//")"
   throttling="$(printf '%s\n' "$yaml" | grep -E 'run\.googleapis\.com/cpu-throttling:' | head -1 | sed "s/.*: *['\"]*//; s/['\"]*$//")"
-  timeout="$(printf '%s\n' "$yaml" | grep -E 'timeoutSeconds:' | head -1 | sed 's/.*: *//')"
+  # The service's own field: the default startup probe also has a timeoutSeconds line (240), which
+  # a grep over the YAML picked up on the first deploy (2026-09-26).
+  timeout="$(gcloud run services describe "$SERVICE" --project="$PROJECT_ID" --region="$REGION" \
+    --format='value(spec.template.spec.timeoutSeconds)' 2>/dev/null || true)"
   info "minScale=$min_scale maxScale=$max_scale cpu-throttling=$throttling timeoutSeconds=$timeout"
 
   [ "$min_scale" = "1" ] || fail "minScale is '$min_scale', must be 1 (correctness: in-process state)"
@@ -522,7 +525,7 @@ check_dashboard() {
   step "10. X-ray dashboard is served"
   local path code
   # The SPA shell and one of its modules: a runtime stage without `public/` answers 404 for both
-  # while /healthz and the whole JSON API stay green, which is exactly how this shipped unnoticed.
+  # while /health and the whole JSON API stay green, which is exactly how this shipped unnoticed.
   for path in /xray/ /xray/app.js; do
     code="$(http GET "$BASE_URL$path")"
     if [ "$code" = "200" ]; then
@@ -580,7 +583,7 @@ main() {
       *)         say "  Unexpected value; expected log-only or allowlist." ;;
     esac
   else
-    say "  unknown: /healthz did not report origin_policy"
+    say "  unknown: /health did not report origin_policy"
   fi
 
   step "Summary"

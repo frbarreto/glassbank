@@ -58,6 +58,7 @@ describe('the X-ray HTTP read model', () => {
       catalog: '/xray/api/catalog',
       stream: '/xray/api/stream',
       healthz: '/healthz',
+      health: '/health',
     });
   });
 

@@ -104,10 +104,10 @@ jobs:
             -e XRAY_ADMIN_TOKEN="$(openssl rand -hex 24)" \
             mcp-bank:ci
           for _ in $(seq 1 30); do
-            if curl -fsS http://localhost:8080/healthz >/dev/null 2>&1; then break; fi
+            if curl -fsS http://localhost:8080/health >/dev/null 2>&1; then break; fi
             sleep 1
           done
-          curl -fsS http://localhost:8080/healthz
+          curl -fsS http://localhost:8080/health
           echo
           bash infra/smoke.sh http://localhost:8080
 

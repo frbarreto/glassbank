@@ -44,6 +44,12 @@ export const XRAY_ROUTES = {
   catalog: '/xray/api/catalog',
   stream: '/xray/api/stream',
   healthz: '/healthz',
+  /**
+   * v0.6: the same handler as `healthz`. On Cloud Run, Google's front end answers `/healthz` itself
+   * with a 404 and never forwards it (observed 2026-09-26), so `/health` is the public name and
+   * `/healthz` stays for local tooling.
+   */
+  health: '/health',
 } as const;
 
 /** SSE transport (docs/XRAY_EVENT_MODEL.md section 5). */
@@ -332,7 +338,7 @@ export interface XraySessionBankResponse extends XrayBankSummary {
 }
 
 // ---------------------------------------------------------------------------
-// /healthz (owned by the app block; typed here so the dashboard can read it)
+// /health and its alias /healthz (owned by the app block; typed here so the dashboard can read it)
 // ---------------------------------------------------------------------------
 
 export interface HealthzResponse {

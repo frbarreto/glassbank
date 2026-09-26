@@ -6,7 +6,7 @@ A public remote MCP server for a fictional bank, plus an X-ray dashboard that sh
 
 Every bank operation is mocked. Data is generated deterministically from a seed and lives in memory, with a per-grant SQLite scratch database for the Ramp-style "load, then SQL" pattern. The tool surface, scope model and OAuth shape follow Ramp's public MCP work; the observability layer is ours.
 
-**State (2026-09-26):** code complete, `npm run check` green (1295 tests), contracts v0.5, source at https://github.com/frbarreto/glassbank, **not deployed**. It runs on a laptop behind a cloudflared tunnel; Codex and ChatGPT have connected through it, no claude.ai account has yet. Target: Cloud Run at `glassbank-mcp.abovethefog.app`, deployed by GitHub Actions. See [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md) for what remains.
+**State (2026-09-26):** **deployed** on Cloud Run (service `mcp-bank`, project `lake-fraude`) by the GitHub Actions pipeline of https://github.com/frbarreto/glassbank on every push to `main`; live at https://mcp-bank-520283334162.us-central1.run.app (`/mcp`, `/xray`, `/health`). `npm run check` green, contracts v0.6. Next: the hostname `glassbank-mcp.abovethefog.app`, then real clients (Codex and ChatGPT connected earlier through a tunnel; no claude.ai account yet). See [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md).
 
 ## Try it
 

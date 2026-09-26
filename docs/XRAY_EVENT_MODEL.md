@@ -136,7 +136,7 @@ Redaction (`src/xray/redaction.ts`, every event on the way in; unit-tested): sen
 | `GET /xray/api/catalog?xs=` | viewer cookie | `XrayCatalogSnapshot {xs, content_hash, captured_at, event_id, tools, availability, feature_flags}`; 400 without `xs`, 404 before a listing. |
 | `GET /xray/api/stream` | viewer cookie | SSE, section 5. |
 | other `/xray/api/*` | - | 404 `not_found`. |
-| `GET /healthz` | none | `HealthzResponse {status: "ok", boot_id, version, origin_policy, uptime_s}` (app block). |
+| `GET /health` (alias `/healthz`, unreachable through Cloud Run's front end) | none | `HealthzResponse {status: "ok", boot_id, version, origin_policy, uptime_s}` (app block). |
 
 Errors are `{error, message}` (`XrayErrorResponse`); no cookie -> 401 `unauthorized`. Admin responses go through `applyObserverRedaction`. `XraySessionSummary`: `xs, login_id, grant_id, parent_grant_id, persona {id, name, kind, shared}, client, protocol_version, era, started_at, last_seen_at, initialize_count, call_count, error_count, token_expires_at, boot_id`. `XrayGrantFacts`: `grant_id, parent_grant_id, login_id, scopes, auth_level, client_id (hash), client_name, client_reconstructed, created_at, expires_at, revoked`. `XraySessionCounters`: `events, calls, errors, protocol_errors, tables_loaded, queries, bank_operations`.
 

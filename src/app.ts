@@ -1,7 +1,7 @@
 /**
  * Composition root (block: app).
  *
- * Builds the Express 5 application: `trust proxy`, a request id, JSON body parsing, `/healthz`,
+ * Builds the Express 5 application: `trust proxy`, a request id, JSON body parsing, `/health`,
  * and the mount points every later block plugs into. It contains no domain logic and no global
  * mutable state; blocks are injected (docs/blocks/app.md, docs/REPO_LAYOUT.md section 3).
  *
@@ -20,7 +20,7 @@ import type { AppConfig } from './config/index.js';
 export interface AppDeps {
   /** Identifies this process; changes on every restart and redeploy (docs/DEPLOYMENT.md 1.4). */
   readonly bootId?: string;
-  /** Package version reported by `/healthz`; read from package.json when omitted. */
+  /** Package version reported by `/health`; read from package.json when omitted. */
   readonly version?: string;
   /** Mounted at `/` by T0.3+: /authorize, /token, /register, /revoke, /.well-known/*. */
   readonly authRouter?: RequestHandler;
@@ -36,7 +36,7 @@ export interface AppDeps {
   readonly dashboardRoot?: string;
 }
 
-/** What `/healthz` answers. Field names are snake_case because they are a wire contract. */
+/** What `/health` answers. Field names are snake_case because they are a wire contract. */
 export interface HealthResponse {
   readonly status: 'ok';
   readonly boot_id: string;
@@ -103,7 +103,7 @@ const XRAY_PLACEHOLDER_HTML = `<!doctype html>
         This placeholder is served by the scaffold (task T0.1). The live session view, the event
         stream and the pairing flow arrive with the <code>xray</code> and <code>dashboard</code> blocks.
       </p>
-      <p>The server is running: <a href="/healthz">/healthz</a>.</p>
+      <p>The server is running: <a href="/health">/health</a>.</p>
     </main>
   </body>
 </html>
@@ -148,7 +148,10 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): Express {
 
   app.use(requestIdMiddleware());
 
-  app.get('/healthz', (_req: Request, res: Response) => {
+  // /health is the public name. On Cloud Run, Google's front end answers /healthz itself with a
+  // 404 and never forwards it (observed on the first deploy, 2026-09-26); /healthz stays as an alias
+  // for local tooling (compose health checks, e2e scripts). Contract: XRAY_ROUTES.health, v0.6.
+  app.get(['/health', '/healthz'], (_req: Request, res: Response) => {
     const body: HealthResponse = {
       status: 'ok',
       boot_id: bootId,

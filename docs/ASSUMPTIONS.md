@@ -63,7 +63,7 @@ no GCP deploy so far; Codex connected through the cloudflared tunnel on 2026-09-
 | A-20 | About US$47/month for an always-on 1 vCPU / 1 GiB instance is accepted over a cheaper VM (D-2). | open | `infra/vm/README.md` |
 | A-21 | Two micro-apps in one process is acceptable; the mitigation is a thin `xray` block and an emitter that never throws. | validated | `src/xray/emitter.ts` |
 | A-25 | The event log is a WAL SQLite file at `XRAY_DB_PATH` (`/tmp/xray.sqlite`, memory-backed on Cloud Run) and is lost on restart; `SNAPSHOT_BUCKET` is parsed but unused (D-6). | validated | `src/xray/log.ts` |
-| A-30 | Images go to the existing `lake-fraude` Artifact Registry repository; the `laf-ingestor` VM stays terminated (D-7). | open (not deployed) | `infra/bootstrap.sh`, `infra/deploy.sh` |
+| A-30 | Images go to the existing `lake-fraude` Artifact Registry repository; the `laf-ingestor` VM stays terminated (D-7). | validated (first deploy 2026-09-26) | `infra/bootstrap.sh`, `infra/deploy.sh` |
 | A-36 | The service answers on several hostnames (`PUBLIC_HOSTS`: both `run.app` forms in the cloud, the tunnel host locally); issuer, PRM `resource`, `aud` and the `resource_metadata` challenge derive from the validated request `Host`; `PUBLIC_BASE_URL` is the fallback and the pairing-URL base. | validated through the tunnel | `src/auth/metadata.ts`, `src/auth/verify.ts`, `infra/smoke.sh` |
 | A-43 | Express `trust proxy` yields the client IP; per-IP limits are sized for Anthropic's shared `160.79.104.0/21` egress (`RATE_LIMIT_IP_REGISTER=60` per hour, `RATE_LIMIT_IP_AUTHORIZE=300` per 15 min); `/token` is also keyed by `client_id` / `grant_id`; the SDK auth router is not used. | validated locally | `src/app.ts`, `src/auth/index.ts`, `src/auth/rate-limit.ts`; `infra/smoke.sh` check 9 |
 | A-44 | Bounded LRUs (`MAX_DCR_CLIENTS`, `MAX_MATERIALISED_PERSONAS`, `MAX_PERSONA_OVERLAYS`, `MAX_SCRATCH_DBS`, `RATE_LIMIT_LOGIN_GRANTS`) keep a 1 GiB singleton bounded and every eviction is an event; the defaults in `.env.example` are untuned. | open (no load test) | `src/bank-core/lru.ts`, `src/etl/scratch-db.ts`, `src/auth/clients.ts` |
@@ -82,7 +82,7 @@ Settled by the user on 2026-09-08 (D-1 to D-16), 2026-09-09 (D-17 to D-19) and 2
 | # | Decision | Outcome |
 |---|---|---|
 | D-1 | Currency and locale | USD, integer cents, neutral English names, ACH / wire / internal rails |
-| D-2 | Hosting | Cloud Run (`mcp-bank`, `lake-fraude`, `us-central1`) with a local-first workflow; `infra/vm/` kept as a working alternative; nothing deployed yet |
+| D-2 | Hosting | Cloud Run (`mcp-bank`, `lake-fraude`, `us-central1`) with a local-first workflow; `infra/vm/` kept as a working alternative; deployed 2026-09-26 through the pipeline (D-24) |
 | D-3 | Write tools | On: `FEATURE_FLAGS=writes;transfers`; `lock_or_unlock_card` and `create_transfer` listed from day one |
 | D-4 | Persona model | Three shared seeded personas plus "create a demo customer" |
 | D-5 | Observer mode | Yes, behind `XRAY_ADMIN_TOKEN`, redacted |

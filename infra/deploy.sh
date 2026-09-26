@@ -274,7 +274,7 @@ summary() {
   cat <<EOF
 MCP endpoint     : ${STATUS_URL}/mcp
 Dashboard        : ${STATUS_URL}/xray
-Health           : ${STATUS_URL}/healthz
+Health           : ${STATUS_URL}/health
 Origin policy    : ${ORIGIN_POLICY}
 PUBLIC_BASE_URL  : ${PUBLIC_BASE_URL}
 PUBLIC_HOSTS     : ${PUBLIC_HOSTS}

@@ -48,6 +48,16 @@ describe('GET /healthz', () => {
     });
     expect(response.headers.get('x-request-id')).toBe('req-from-the-proxy');
   });
+
+  it('answers the same at /health, the public name (Cloud Run front end swallows /healthz)', async () => {
+    const a = await fetch(`${baseUrl}/health`);
+    const b = await fetch(`${baseUrl}/healthz`);
+    expect(a.status).toBe(200);
+    const ja = (await a.json()) as Record<string, unknown>;
+    const jb = (await b.json()) as Record<string, unknown>;
+    expect(ja.status).toBe('ok');
+    expect(ja.boot_id).toBe(jb.boot_id);
+  });
 });
 
 describe('placeholder dashboard', () => {

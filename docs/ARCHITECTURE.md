@@ -23,7 +23,7 @@ Two logical micro-apps share one process and one origin (ADR-6): **mcp-server** 
 | auth | `src/auth/` | Hand-rolled OAuth 2.1 authorization server and verifier: RFC 8414 and 9728 metadata, DCR persisted to `AUTH_DB_PATH`, `/authorize` -> `/login` -> `/consent` pages on a `txn` JWT, `/token`, `/revoke`, rate limits, `verifyAccessToken`. | `auth.*` (server side) |
 | xray | `src/xray/` | Emitter, redaction, ring buffer, SQLite WAL log at `XRAY_DB_PATH`, read model, SSE stream, pairing codes, viewer cookie; serves `/xray/s/:code` and `/xray/api/*`. | `xray.*`, `server.*` |
 | dashboard | `public/` | Vanilla-JS SPA (flat files, `panel-*.js`): `EventSource` client with reconnect, panels over a reducer, `?fixture=1` replay of `test/fixtures/events.jsonl`. Talks HTTP only. | none |
-| app | `src/app.ts`, `src/composition.ts`, `src/server.ts`, `src/config/` | Express 5 app, `trust proxy`, request id, `/healthz`, mount order, env parsing, wiring by injection, SIGTERM handler. | none |
+| app | `src/app.ts`, `src/composition.ts`, `src/server.ts`, `src/config/` | Express 5 app, `trust proxy`, request id, `/health`, mount order, env parsing, wiring by injection, SIGTERM handler. | none |
 | infra | `infra/` | `Dockerfile`, `cloudbuild.yaml`, `bootstrap.sh`, `deploy.sh` (the only place gcloud flags live), `smoke.sh`, `local/` (compose, tunnel notes), `vm/` (documented alternative). | none |
 
 ## 3. Tech stack
@@ -50,7 +50,7 @@ Prefixes are `ID_PREFIXES` in `src/contracts/events.ts`; `AuthContext` (`src/con
 - **grant `grt_`** - one consent or its extension (`GrantRecord` in `src/auth/types.ts`: `login_id`, `persona_id`, `client_id`, `scopes`, `auth_level`, `parent_grant_id`). A re-consent from the same login for the same `client_id` keeps the `grant_id` and widens the scopes (`auth.grant.updated`).
 - **tokens** - JWTs carrying `jti`, `typ` (`code` | `access` | `refresh` | `viewer` | `txn` | `login`), `client_id`, `grant_id`, `login_id`, `sub` = persona id, `scope`, `auth_level`, `aud` = canonical `/mcp` URL. Code 10 min, access 1 h, refresh 7 d read-only or 24 h read-write and rotating (`TOKEN_LIFETIMES_SECONDS`). Never stored or logged.
 - **xs `xs_`** - the X-ray session, minted by `src/mcp/sessions.ts` per `grant_id`; silence longer than `XS_IDLE_GAP_MINUTES` (15) closes it (`session.ended`) and the next request opens a new one; a re-`initialize` inside a live segment only raises `initialize_count`. Not tied to any protocol session id.
-- **boot_id `boot_`** - one per process (`newBootId` in `src/app.ts`); reported on `server.started`, `/healthz` and `AuthContext.boot_id`, so `get_current_user` can explain an overlay reset after a restart (A-15).
+- **boot_id `boot_`** - one per process (`newBootId` in `src/app.ts`); reported on `server.started`, `/health` and `AuthContext.boot_id`, so `get_current_user` can explain an overlay reset after a restart (A-15).
 - **events** - process-monotonic `id` (continues from `max(id)` in the log) and per-`xs` `seq`; the envelope carries `xs`, `login_id`, `grant_id`, `persona_id`, `request_id`. `bank.op` receives its `xs` from an `AsyncLocalStorage` opened around every registry call in `src/composition.ts`.
 
 ## 5. Auth and request sequence

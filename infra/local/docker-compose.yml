@@ -12,7 +12,7 @@
 #
 # Usage (from the repository root):
 #   docker compose -f infra/local/docker-compose.yml up --build
-#   curl -s localhost:8080/healthz
+#   curl -s localhost:8080/health
 #   infra/smoke.sh http://localhost:8080
 #   docker compose -f infra/local/docker-compose.yml down          # keeps the volume
 #   docker compose -f infra/local/docker-compose.yml down -v       # drops the SQLite files too
@@ -115,13 +115,13 @@ services:
       SNAPSHOT_BUCKET: "${SNAPSHOT_BUCKET:-}"
 
     # node:22-slim carries no curl or wget, so the health check uses the runtime that is always
-    # there. Matches Cloud Run's own startup probe on /healthz.
+    # there. Matches Cloud Run's own startup probe on /health.
     healthcheck:
       test:
         - CMD
         - node
         - -e
-        - "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        - "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
       interval: 10s
       timeout: 5s
       retries: 6

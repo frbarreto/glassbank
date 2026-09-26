@@ -9,7 +9,7 @@ No domain logic; the only place that imports every block.
 ## Files
 | File | What it does |
 |---|---|
-| `src/app.ts` | `createApp(config, deps)`: `trust proxy` = 1, request id, `/healthz`, the mount order below, JSON 404, the error handler. |
+| `src/app.ts` | `createApp(config, deps)`: `trust proxy` = 1, request id, `/health` (alias `/healthz`, which Cloud Run's front end never forwards; `XRAY_ROUTES.health`, contracts v0.6), the mount order below, JSON 404, the error handler. |
 | `src/composition.ts` | `createGlassBank(config, options)`: bank-core -> auth -> xray -> etl -> tools -> mcp -> `createApp`; `shutdown()`. |
 | `src/server.ts` | Entry point: `loadConfig`, listen, a header-phase guard, SIGTERM/SIGINT, `unhandledRejection`, `uncaughtException`. |
 | `src/config/index.ts` | `loadConfig(env)`: every knob parsed once with zod and its default; one `ConfigError` listing every problem. |
@@ -21,12 +21,12 @@ No domain logic; the only place that imports every block.
 - `src/config/index.ts`: `loadConfig(env = process.env)`, `hasFeatureFlag(config, flag)`, `ENV_VARIABLE_NAMES` (exactly the `.env.example` list), `ConfigError`, `AppConfig`. `src/server.ts` exports nothing.
 
 ## Mount order (`src/app.ts`)
-1. `app.set('trust proxy', 1)` - the hop the proxy appended, never the caller's own header; `x-powered-by` off; `x-request-id` accepted and echoed; `GET /healthz` -> `{status: "ok", boot_id, version, origin_policy, uptime_s}`.
+1. `app.set('trust proxy', 1)` - the hop the proxy appended, never the caller's own header; `x-powered-by` off; `x-request-id` accepted and echoed; `GET /health` -> `{status: "ok", boot_id, version, origin_policy, uptime_s}`.
 2. `authRouter` at `/` (`/.well-known/*`, `/authorize`, `/login`, `/consent`, `/token`, `/register`, `/revoke`), then `mcpRouter` at `/mcp`; only then `express.json` and `urlencoded` at 1 mb, so each router keeps its own limit (256 kb and 4 mb).
 3. `xrayRouter` at `/xray`, then `express.static(public/)` at `/xray` behind it (`_dev/` and `__tests__/` -> 404; `.html` and `.jsonl` sent `no-cache`; the `public/fixtures` symlink serves `?fixture=1`); the placeholder page only when neither is injected.
 4. JSON 404; the error handler keeps the error's own 4xx (`413` over the limit, `400` bad JSON) and answers 5xx with a fixed body.
 
-Host and Origin policy are not applied here: `publicHosts` and `originPolicy` go to `mcp` (`src/mcp/gate.ts` decides per request) and the whole config to `auth` (`canonicalBaseUrl` in `src/auth/routes.ts`); `/healthz` only reports the policy.
+Host and Origin policy are not applied here: `publicHosts` and `originPolicy` go to `mcp` (`src/mcp/gate.ts` decides per request) and the whole config to `auth` (`canonicalBaseUrl` in `src/auth/routes.ts`); `/health` only reports the policy.
 
 ## Composition and shutdown
 - `auth` needs `xray.emitter` and `xray.pairing`, `xray` needs `auth.jwt`: the cycle is broken with two forwarding objects, not by building `auth` twice.
@@ -49,7 +49,7 @@ None. `server.started` and `server.stopping` are emitted by `src/xray/index.ts`;
 
 ## How to test
 ```
-npx vitest run src/__tests__ src/config        # 37 tests, 3 files: config parsing, /healthz, trust proxy, error handler, the mount order
+npx vitest run src/__tests__ src/config        # 37 tests, 3 files: config parsing, /health, trust proxy, error handler, the mount order
 npx vitest run test/import-boundaries.test.ts  # 5 tests: the block dependency rules, parsed from source
 npm run build && node dist/server.js           # the entry point the container runs
 ```

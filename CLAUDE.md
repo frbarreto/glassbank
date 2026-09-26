@@ -2,7 +2,7 @@
 
 A public remote MCP server for a fictional bank plus a live X-ray dashboard. Any MCP client (a claude.ai custom connector, Claude Code, Codex, MCP Inspector) connects over OAuth 2.1 with a mock login, uses Ramp-style tools (`load_*` -> `process_data` -> `execute_query` -> `clear_table`, two guarded write tools) and can watch everything the server observes at `/xray`. All bank data is fake and seeded deterministically. One npm package, TypeScript ESM, one Node process, one Cloud Run service pinned to one instance.
 
-**State (2026-09-26):** code complete and green, contracts v0.5, source on GitHub `frbarreto/glassbank` (public, no branch protection, D-20 to D-25), **not deployed**. It runs on the developer's Mac behind a cloudflared quick tunnel with `ORIGIN_POLICY=log-only`. Codex and ChatGPT have connected through that tunnel (`docs/observations/claude-ai.md`); no claude.ai client has connected yet. Next steps (GCP bootstrap, the GitHub Actions pipeline, the hostname `glassbank-mcp.abovethefog.app`, the open X-ray redesign tasks): `docs/BUILD_PLAN.md`.
+**State (2026-09-26):** **deployed**. Cloud Run service `mcp-bank` in `lake-fraude`, deployed by `.github/workflows/pipeline.yml` on every push to `main` of https://github.com/frbarreto/glassbank (public, no branch protection, D-20 to D-25); live at `https://mcp-bank-520283334162.us-central1.run.app` (Cloud Run also serves `mcp-bank-wdm7njj4pa-uc.a.run.app`), `ORIGIN_POLICY=log-only`, contracts v0.6. Codex and ChatGPT connected earlier through a tunnel (`docs/observations/claude-ai.md`); no claude.ai client yet. Next steps (the hostname `glassbank-mcp.abovethefog.app`, real clients, the open X-ray redesign tasks): `docs/BUILD_PLAN.md`.
 
 ## Documents (read only what the task needs)
 
@@ -37,7 +37,7 @@ Ids: `A-xx` assumption, `D-x` user decision, `ADR-x` architecture decision. Alwa
 ```
 npm ci                        # Node 22 (.nvmrc); 23 works
 npm run dev                   # tsx watch, http://localhost:8080
-npm run check                 # tsc + eslint + vitest: 1295 tests / 60 files - the definition of green
+npm run check                 # tsc + eslint + vitest: 1296 tests / 60 files - the definition of green
 npx vitest run src/<block>    # one block; the dashboard is `npx vitest run public`
 npm run build && npm start    # what the container runs (dist/server.js)
 npm run login [-- --write]    # OAuth handshake in the browser; writes .glass-bank-token.json

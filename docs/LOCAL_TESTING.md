@@ -34,7 +34,7 @@ development default (production refuses the default `OAUTH_SIGNING_KEY`). The fi
 ## 4. Look at it from outside
 
 ```bash
-curl -s http://localhost:8080/healthz
+curl -s http://localhost:8080/health
 # {"status":"ok","boot_id":"boot_b710a378-...","version":"0.1.0","origin_policy":"log-only","uptime_s":21}
 curl -s -i -X POST http://localhost:8080/mcp -H 'content-type: application/json' \
   -H 'accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
@@ -59,7 +59,7 @@ npm run login              # read-only grant: write tools answer the 403 step-up
 npm run login -- --write   # also requests cards:write and transfers:write
 ```
 
-`scripts/local-login.mjs` checks `/healthz`, opens a loopback listener on a random port
+`scripts/local-login.mjs` checks `/health`, opens a loopback listener on a random port
 (`CALLBACK_PORT` fixes it), registers a public native client at `/register`, prints the `/authorize`
 URL to open, waits for the callback, exchanges the code with PKCE S256 and writes
 `.glass-bank-token.json` (gitignored: `base_url`, `client_id`, `access_token`, `refresh_token`,

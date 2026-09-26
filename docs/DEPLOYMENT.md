@@ -1,6 +1,6 @@
 # Deployment
 
-Operations for Glass Bank: one Cloud Run service `mcp-bank`, project `lake-fraude` (`520283334162`), region `us-central1`, expected URL `https://mcp-bank-520283334162.us-central1.run.app`. **Nothing has been deployed yet**: `infra/bootstrap.sh` and `infra/deploy.sh` have only ever run with `DRY_RUN=1`, and the demo runs on the developer's Mac behind a cloudflared tunnel (section 14). gcloud flags live only in `infra/bootstrap.sh`, `infra/deploy.sh` and `infra/smoke.sh`; each honours `DRY_RUN=1` (prints its commands, changes nothing, exits 0). Run that first, every time.
+Operations for Glass Bank: one Cloud Run service `mcp-bank`, project `lake-fraude` (`520283334162`), region `us-central1`, expected URL `https://mcp-bank-520283334162.us-central1.run.app`. **Nothing has been deployed yet**: `infra/bootstrap.sh` and `infra/ci-bootstrap.sh` ran for real on 2026-09-26 (section 2), `infra/deploy.sh` has only ever run with `DRY_RUN=1`, and the demo runs on the developer's Mac behind a cloudflared tunnel (section 14). gcloud flags live only in `infra/bootstrap.sh`, `infra/ci-bootstrap.sh`, `infra/deploy.sh` and `infra/smoke.sh`; each honours `DRY_RUN=1` (prints its commands, changes nothing, exits 0). Run that first, every time.
 
 ## 1. Topology
 
@@ -17,7 +17,14 @@ DRY_RUN=1 ./infra/bootstrap.sh    # print every command, create nothing
 ./infra/bootstrap.sh              # idempotent: every create is guarded by a describe (no make target)
 ```
 
-Creates, always with `--project=lake-fraude`: the APIs `run`, `cloudbuild`, `artifactregistry` and `secretmanager` (`gcloud services enable`); the runtime service account `mcp-bank-run@lake-fraude.iam.gserviceaccount.com`; the secrets `mcp-bank-oauth-signing-key` (`openssl rand -base64 48`) and `mcp-bank-admin-token` (`openssl rand -hex 24`) with `--replication-policy=automatic --data-file=-`, values never printed and never overwritten; `roles/secretmanager.secretAccessor` on both for that service account. `ENABLE_SNAPSHOT_BUCKET=1` also creates `gs://lake-fraude-mcp-bank-snapshots` (`--uniform-bucket-level-access`, `roles/storage.objectAdmin`; D-6, off by default, nothing reads it yet). Knobs: `PROJECT_ID`, `REGION`, `SERVICE`, `EXPECT_ACCOUNT`.
+Creates, always with `--project=lake-fraude`: the APIs `run`, `cloudbuild`, `artifactregistry` and `secretmanager` (`gcloud services enable`); the runtime service account `mcp-bank-run@lake-fraude.iam.gserviceaccount.com`; the secrets `mcp-bank-oauth-signing-key` (`openssl rand -base64 48`) and `mcp-bank-admin-token` (`openssl rand -hex 24`) with `--replication-policy=automatic --data-file=-`, values never printed and never overwritten; `roles/secretmanager.secretAccessor` on both for that service account. `ENABLE_SNAPSHOT_BUCKET=1` also creates `gs://lake-fraude-mcp-bank-snapshots` (`--uniform-bucket-level-access`, `roles/storage.objectAdmin`; D-6, off by default, nothing reads it yet). Knobs: `PROJECT_ID`, `REGION`, `SERVICE`, `EXPECT_ACCOUNT`. Ran for real on 2026-09-26.
+
+```
+DRY_RUN=1 ./infra/ci-bootstrap.sh # print every command, create nothing
+./infra/ci-bootstrap.sh           # idempotent; needs bootstrap.sh first (the runtime service account)
+```
+
+`infra/ci-bootstrap.sh` (D-24) creates the deployer `mcp-bank-deployer@lake-fraude.iam.gserviceaccount.com` that GitHub Actions impersonates without a key: `roles/artifactregistry.writer` on the `lake-fraude` repository, `roles/run.admin` on the project (`--condition=None`), `roles/iam.serviceAccountUser` on `mcp-bank-run` only, and `roles/iam.workloadIdentityUser` for `principalSet://iam.googleapis.com/projects/520283334162/locations/global/workloadIdentityPools/github-pool/attribute.repository/frbarreto/glassbank`. The pool `github-pool` and its provider `github-provider` (attribute condition `assertion.repository_owner == 'frbarreto'`) pre-exist and are never modified. Bindings retry through IAM propagation. The script ends by printing the GitHub repository variables the pipeline reads: `GCP_PROJECT_ID`, `GCP_WIF_PROVIDER`, `GCP_DEPLOYER_SA`, `PUBLIC_BASE_URL` (set in section 15). Knobs: `GITHUB_REPO`, `WIF_POOL`, `WIF_PROVIDER`, plus those of `bootstrap.sh`. Ran for real on 2026-09-26.
 
 ## 3. Deploy - `infra/deploy.sh` (`make deploy`)
 

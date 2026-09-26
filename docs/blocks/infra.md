@@ -1,6 +1,6 @@
 # infra
 
-Status: scripts complete and verified locally; **nothing is deployed** - `bootstrap.sh` and `deploy.sh` have only ever run with `DRY_RUN=1`, no gcloud resource exists, and the demo runs on the developer's Mac behind a cloudflared quick tunnel.
+Status: GCP bootstrapped on 2026-09-26 (`bootstrap.sh` and `ci-bootstrap.sh` ran for real: runtime and deployer service accounts, the two secrets, the IAM bindings); **nothing is deployed** - `deploy.sh` has only ever run with `DRY_RUN=1`, and the demo runs on the developer's Mac behind a cloudflared quick tunnel. Next: the GitHub Actions pipeline (D-24), then the hostname (D-25).
 
 ## Purpose
 Build, run, deploy and verify the one container: locally first (`docker compose`, cloudflared), then the Cloud Run service `mcp-bank` in `lake-fraude` / `us-central1` (D-2).
@@ -11,7 +11,8 @@ The gcloud flags live in `deploy.sh` and nowhere else.
 |---|---|
 | `infra/Dockerfile` | Multi-stage `node:22-slim`: `npm ci`, `npm run build`, `npm prune --omit=dev`; the runtime stage copies `dist/`, `node_modules/`, `package.json`, `public/` and `test/fixtures` (the target of the `public/fixtures` symlink); user `node`, `PORT=8080`, `CMD node dist/server.js`. |
 | `infra/cloudbuild.yaml` | One `docker build -f infra/Dockerfile -t $_IMAGE .` step and `images: [$_IMAGE]`; never deploys. |
-| `infra/bootstrap.sh` | One-time: enable the APIs, create the `mcp-bank-run` service account, Secret Manager `mcp-bank-oauth-signing-key` (`openssl rand -base64 48`) and `mcp-bank-admin-token` (`openssl rand -hex 24`), bind `secretAccessor`; idempotent; never prints a secret. |
+| `infra/bootstrap.sh` | One-time: enable the APIs, create the `mcp-bank-run` service account, Secret Manager `mcp-bank-oauth-signing-key` (`openssl rand -base64 48`) and `mcp-bank-admin-token` (`openssl rand -hex 24`), bind `secretAccessor`; idempotent; never prints a secret. Ran for real on 2026-09-26. |
+| `infra/ci-bootstrap.sh` | One-time (D-24): the deployer service account `mcp-bank-deployer` that GitHub Actions impersonates through the existing Workload Identity pool `github-pool`: `artifactregistry.writer` on the `lake-fraude` repository, `run.admin` on the project, `serviceAccountUser` on `mcp-bank-run`, `workloadIdentityUser` for `principalSet://.../attribute.repository/frbarreto/glassbank`; retries bindings through IAM propagation; prints the GitHub variables to set; idempotent; `DRY_RUN=1`. Ran for real on 2026-09-26. |
 | `infra/deploy.sh` | Cloud Build into Artifact Registry `lake-fraude`, `gcloud run deploy` with the canonical flags, then the `status.url` / `PUBLIC_HOSTS` correction. |
 | `infra/smoke.sh [BASE_URL]` | Ten checks: DNS, no cross-host redirect, the 401 challenge, discovery on every host, `/healthz`, Cloud Run invariants, public IAM, discovery latency, 30x `/register` without a 429, dashboard served. |
 | `infra/local/docker-compose.yml` | The production image on the Mac with `NODE_ENV=production`, every knob as an env passthrough, SQLite on a named volume, 1 CPU / 1 GiB, a `/healthz` probe, 15 s stop grace. |

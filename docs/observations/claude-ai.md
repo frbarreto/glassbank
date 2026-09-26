@@ -32,6 +32,7 @@ Measured from the developer's Mac against revision `mcp-bank-00004-9vw`, `ORIGIN
 - `http://` answers 302 to `https://`; responses carry `server: Google Frontend` and `alt-svc: h3`; the app's `x-request-id` comes through.
 - Google's front end intercepts exactly `/healthz` (query string included) with its own 404 and never forwards it; `/healthz/` and `/health` reach the app. Contracts v0.6 made `/health` the public name.
 - `gcloud run services describe --format=yaml` carries a default `startupProbe` with `timeoutSeconds: 240` above the service's own `timeoutSeconds: 3600`; smoke check 6 reads the service field.
+- Domain mapping `glassbank-mcp.abovethefog.app`: record created 19:23 UTC, `CertificateProvisioned` 19:34 UTC (11 minutes, well inside the hourly re-check the status message announces); at 19:41 UTC Google's edges still answered TLS for the name inconsistently from Brazil (one request in four), while the GitHub runner's smoke passed all 36 checks at 19:42 UTC. Plain `http://` on the name already answered 302 to `https://` before the certificate was served.
 
 ## Still unobserved
 

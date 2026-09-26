@@ -1,6 +1,6 @@
 # infra
 
-Status: **deployed** on 2026-09-26 by `.github/workflows/pipeline.yml` (first run: check, e2e, image and deploy green; the live smoke exposed the `/healthz` interception and the check-6 parser bug, both fixed in the same change). `bootstrap.sh` and `ci-bootstrap.sh` ran for real; `make deploy` (Cloud Build) has never run. `domain.sh` ran on 2026-09-26: mapping and CNAME for `glassbank-mcp.abovethefog.app` created, certificate pending; then `PUBLIC_BASE_URL` and a redeploy (`docs/DEPLOYMENT.md` section 16).
+Status: **deployed** on 2026-09-26 by `.github/workflows/pipeline.yml` (first run: check, e2e, image and deploy green; the live smoke exposed the `/healthz` interception and the check-6 parser bug, both fixed in the same change). `bootstrap.sh` and `ci-bootstrap.sh` ran for real; `make deploy` (Cloud Build) has never run. `domain.sh` ran on 2026-09-26: `glassbank-mcp.abovethefog.app` is mapped, certified and the canonical `PUBLIC_BASE_URL`; the dispatched redeploy passed 36 smoke checks on both hostnames (`docs/DEPLOYMENT.md` section 16). `observe.sh` ran the same day (section 17).
 
 ## Purpose
 Build, run, deploy and verify the one container: locally first (`docker compose`, cloudflared), then the Cloud Run service `mcp-bank` in `lake-fraude` / `us-central1` (D-2).

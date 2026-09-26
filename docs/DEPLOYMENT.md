@@ -228,7 +228,7 @@ DRY_RUN=1 ./infra/domain.sh      # print the two commands
 ./infra/domain.sh status         # certificate provisioning, the record, what the name resolves to
 ```
 
-Ran on 2026-09-26 19:23 UTC: mapping created (`DomainRoutable: True`), `glassbank-mcp.abovethefog.app. CNAME ghs.googlehosted.com.` created, certificate pending (Cloud Run re-checks DNS on an hourly interval). Once `https://glassbank-mcp.abovethefog.app/health` answers: `gh variable set PUBLIC_BASE_URL --repo frbarreto/glassbank --body "https://glassbank-mcp.abovethefog.app"`, then redeploy (a push, or a dispatch with the current tag), so `deploy.sh` puts both hostnames in `PUBLIC_HOSTS` and the pairing links use the hostname (invariant 4, A-36). The `run.app` URL keeps working. `make pause` keeps the mapping; after `make resume`, `./infra/domain.sh status` shows whether it re-attached.
+Done on 2026-09-26: mapping and record created at 19:23 UTC, `CertificateProvisioned` at 19:34 UTC, the repository variable `PUBLIC_BASE_URL=https://glassbank-mcp.abovethefog.app` set, and a dispatched redeploy at 19:42 UTC passed the smoke on both hostnames (36 checks). `deploy.sh` keeps that base and lists all three hosts in `PUBLIC_HOSTS` (the custom one, the deterministic `run.app` one and Cloud Run's legacy `status.url` host), so the OAuth metadata follows whichever host the client typed (invariant 4, A-36) and the pairing links use the hostname. For some minutes after issuance, Google's edges answer TLS for the new name inconsistently (from Brazil, one request in four succeeded at 19:41 UTC); it settles by itself. `make pause` keeps the mapping; after `make resume`, `./infra/domain.sh status` shows whether it re-attached.
 
 ## 17. Uptime check and alert - `infra/observe.sh`
 

@@ -60,7 +60,7 @@ no GCP deploy so far; Codex connected through the cloudflared tunnel on 2026-09-
 | A-15 | One pinned Cloud Run instance; a restart loses scratch tables, the ring buffer, the event log, the token sets, the DCR table and every bank write (per-login overlays); `server.started` and the `boot_id` from `get_current_user` make it visible. | validated locally; cloud open | `src/tools/handlers/meta.ts`, `src/contracts/events.ts` |
 | A-18 | Node 22 (`node:22-slim`) with prebuilt `better-sqlite3` binaries builds and runs; Node 23.10 on the Mac works too. | validated | `infra/Dockerfile`; `npm run check` |
 | A-19 | `--concurrency=250` and 20 s SSE heartbeats suffice for a few viewers plus MCP traffic. | open | `infra/deploy.sh` |
-| A-20 | About US$47/month for an always-on 1 vCPU / 1 GiB instance is accepted over a cheaper VM (D-2); between demos the service is deleted (`make pause`), so an idle month costs cents of image storage. | validated in principle (billing since 2026-09-26; no invoice seen yet) | `infra/pause.sh`, `infra/vm/README.md` |
+| A-20 | About US$47/month for an always-on 1 vCPU / 1 GiB instance is accepted over a cheaper VM (D-2); between demos the service is deleted (`make pause`), so an idle month costs cents of image storage. | validated in principle (billing since 2026-09-26; no invoice seen yet) | `infra/pause.sh` |
 | A-21 | Two micro-apps in one process is acceptable; the mitigation is a thin `xray` block and an emitter that never throws. | validated | `src/xray/emitter.ts` |
 | A-25 | The event log is a WAL SQLite file at `XRAY_DB_PATH` (`/tmp/xray.sqlite`, memory-backed on Cloud Run) and is lost on restart; `SNAPSHOT_BUCKET` is parsed but unused (D-6). | validated | `src/xray/log.ts` |
 | A-30 | Images go to the existing `lake-fraude` Artifact Registry repository; the `laf-ingestor` VM stays terminated (D-7). | validated (first deploy 2026-09-26) | `infra/bootstrap.sh`, `infra/deploy.sh` |
@@ -84,7 +84,7 @@ Settled by the user on 2026-09-08 (D-1 to D-16), 2026-09-09 (D-17 to D-19) and 2
 | # | Decision | Outcome |
 |---|---|---|
 | D-1 | Currency and locale | USD, integer cents, neutral English names, ACH / wire / internal rails |
-| D-2 | Hosting | Cloud Run (`mcp-bank`, `lake-fraude`, `us-central1`) with a local-first workflow; `infra/vm/` kept as a working alternative; deployed 2026-09-26 through the pipeline (D-24) |
+| D-2 | Hosting | Cloud Run (`mcp-bank`, `lake-fraude`, `us-central1`) with a local-first workflow; deployed 2026-09-26 through the pipeline (D-24). The `infra/vm/` alternative, never run, was removed on 2026-09-26 (`make pause` covers the cost concern) |
 | D-3 | Write tools | On: `FEATURE_FLAGS=writes;transfers`; `lock_or_unlock_card` and `create_transfer` listed from day one |
 | D-4 | Persona model | Three shared seeded personas plus "create a demo customer" |
 | D-5 | Observer mode | Yes, behind `XRAY_ADMIN_TOKEN`, redacted |

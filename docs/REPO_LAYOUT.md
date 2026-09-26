@@ -17,7 +17,6 @@ mcp_bank/
     contracts/     CHANGES.md          append-only contract change log
     observations/  claude-ai.md        what real clients sent
     tasks/         TEMPLATE.md         ticket template for a new task
-    archive/       build history: planning docs, tickets, review records (not maintained)
   src/
     contracts/     auth.ts bank.ts events.ts scopes.ts tools.ts xray-api.ts index.ts   FROZEN, append-only
     testing/       fakes.ts            in-memory fake of every contract interface
@@ -51,7 +50,6 @@ mcp_bank/
                    (worker-sqlite-task.mjs bomb-child.mjs probe-*.mjs check-worker-sqlite.ts)
   infra/           Dockerfile cloudbuild.yaml bootstrap.sh ci-bootstrap.sh deploy.sh smoke.sh domain.sh observe.sh pause.sh
     local/         docker-compose.yml cloudflared.md
-    vm/            docker-compose.yml Caddyfile Caddyfile.ip-cert README.md   (documented alternative)
 ```
 
 Each `src/<block>/` has `index.ts` (exports exactly one factory `create<Block>(deps)` and its types), the implementation, and `__tests__/`. The block's public interface is what `index.ts` exports.
@@ -109,3 +107,14 @@ Task ticket: `docs/tasks/TEMPLATE.md`. Set `Status:` when you start and when you
 ## 7. Naming
 
 Tools `snake_case`; events `family.noun.verb`; scopes `resource:read|write`; env vars `UPPER_SNAKE`; ids prefixed `per_`, `lgn_`, `grt_`, `xs_`, `acc_`, `card_`, `txn_`, `tr_`, `bill_`, `pay_`; pairing codes `BANK-XXXX-XXXX-XX`. Files `kebab-case.ts`; tests in `__tests__/`. Commits `[block] summary`. Dependencies pinned to exact versions and listed in `docs/DEPENDENCIES.md`.
+
+## 8. Ids that survive in code comments
+
+Comments and tests still cite the tickets of the 2026-09-08 build (the planning record itself was deleted on 2026-09-26; git history has it). Decoder:
+
+| Id | Meaning |
+|---|---|
+| T0.1 / T0.2 / T0.3 / T0.4 / T0.5 | scaffold / contracts / mcp + auth spike / infra scripts / the gate (deploy and first live client) |
+| L1 to L8 | bank-core / etl / tools / mcp / auth / xray / dashboard / infra |
+| I1 to I4 | wiring in `src/composition.ts` / the write and step-up demo / the dashboard against the live server / deploy plus the first claude.ai connection |
+| T5, T6, T7x, T8, T9, T10a, T10b, T11 | tasks of the X-ray redesign (`docs/BUILD_PLAN.md`, D-17 to D-19) |

@@ -20,7 +20,6 @@ A public remote MCP server for a fictional bank plus a live X-ray dashboard. Any
 | Ramp lineage and copied fragments | `docs/RAMP_REFERENCE.md`, `THIRD_PARTY_NOTICES.md` |
 | Contract change log and open proposals | `docs/contracts/CHANGES.md` |
 | What real clients actually sent | `docs/observations/claude-ai.md` |
-| Build history (evidence only, not maintained) | `docs/archive/` |
 
 Ids: `A-xx` assumption, `D-x` user decision, `ADR-x` architecture decision. Always cite the prefix.
 

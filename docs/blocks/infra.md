@@ -21,12 +21,8 @@ The `gcloud run deploy` flags live in `deploy.sh` and nowhere else; the other sc
 | `infra/smoke.sh [BASE_URL]` | Ten checks: DNS, no cross-host redirect, the 401 challenge, discovery on every host, `/health`, Cloud Run invariants, public IAM, discovery latency, 30x `/register` without a 429, dashboard served. |
 | `infra/local/docker-compose.yml` | The production image on the Mac with `NODE_ENV=production`, every knob as an env passthrough, SQLite on a named volume, 1 CPU / 1 GiB, a `/health` probe, 15 s stop grace. |
 | `infra/local/cloudflared.md` | Exposing `localhost:8080` over HTTPS: `cloudflared tunnel --url http://localhost:8080`, then restart with the tunnel host in `PUBLIC_BASE_URL` and `PUBLIC_HOSTS`. |
-| `infra/vm/README.md` | The Compute Engine alternative (`laf-ingestor`, D-7): gcloud steps, Docker install, run, verify, trade-offs, what is unverified. |
-| `infra/vm/docker-compose.yml` | Caddy 2.11 in front of the app on a private network; `PUBLIC_BASE_URL`, `PUBLIC_HOSTS` and `OAUTH_SIGNING_KEY` are required. |
-| `infra/vm/Caddyfile` | Option A: a `nip.io` hostname with an HTTP-01 certificate; `flush_interval -1`, HTTP/1.1 upstream. |
-| `infra/vm/Caddyfile.ip-cert` | Option B: a Let's Encrypt IP certificate (`shortlived` profile); syntax-checked only. |
 
-`.dockerignore` at the root excludes `docs`, `test` (except `test/fixtures`), `scripts`, `infra/vm`, `infra/local`, `*.md` and every `.sqlite*` file.
+`.dockerignore` at the root excludes `docs`, `test` (except `test/fixtures`), `scripts`, `infra/local`, `*.md` and every `.sqlite*` file.
 
 ## Public interface (scripts and their env inputs)
 - `infra/bootstrap.sh`: `PROJECT_ID` (lake-fraude), `REGION` (us-central1), `SERVICE` (mcp-bank), `EXPECT_ACCOUNT`, `ENABLE_SNAPSHOT_BUCKET=1`, `DRY_RUN=1`. No `make` target.
@@ -76,4 +72,3 @@ The cloud path has run only through the pipeline (`SKIP_BUILD=1`); `make deploy 
 - `--platform=managed` is a hidden, default flag in current gcloud.
 - `smoke.sh` needs `jq` for strict JSON assertions; without it array checks are substring matches.
 - `make resume` recreates the service, so Cloud Run's revision numbering restarts at `00001` and `/health` shows a new `boot_id`; nothing depends on either.
-- The VM path is unproven: no gcloud command run, no certificate issued, the two containers never started together.

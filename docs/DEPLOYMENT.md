@@ -189,9 +189,9 @@ Parsed once in `src/config/index.ts` (zod; one `ConfigError` lists every problem
 | `RATE_LIMIT_LOGIN_GRANTS` | `20` | new grants per `login_id` per day; a step-up that extends a grant is free (ADR-14) |
 | `SNAPSHOT_BUCKET` | unset | GCS bucket for event-log snapshots (D-6); parsed, read by nothing yet |
 
-## 12. VM alternative
+## 12. VM alternative (removed)
 
-`infra/vm/` holds a Caddy-plus-app `docker-compose.yml` and two Caddyfiles (a `nip.io` hostname, or a Let's Encrypt IP-address certificate) so the same image can run on a Compute Engine VM; `infra/vm/README.md` has the gcloud, host and compose steps and the trade-offs. None of it has been run: D-2 chose Cloud Run, D-7 keeps `laf-ingestor` terminated, and `.dockerignore` excludes the directory from the image.
+A Compute Engine alternative (Caddy plus the same image) lived in `infra/vm/` until 2026-09-26. It was never run; with the service deployed and `make pause` covering the cost concern, it was deleted (git history before that date has it). The section number is kept so cross-references stay valid.
 
 ## 13. Adding the connector in claude.ai
 

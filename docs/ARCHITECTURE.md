@@ -24,7 +24,7 @@ Two logical micro-apps share one process and one origin (ADR-6): **mcp-server** 
 | xray | `src/xray/` | Emitter, redaction, ring buffer, SQLite WAL log at `XRAY_DB_PATH`, read model, SSE stream, pairing codes, viewer cookie; serves `/xray/s/:code` and `/xray/api/*`. | `xray.*`, `server.*` |
 | dashboard | `public/` | Vanilla-JS SPA (flat files, `panel-*.js`): `EventSource` client with reconnect, panels over a reducer, `?fixture=1` replay of `test/fixtures/events.jsonl`. Talks HTTP only. | none |
 | app | `src/app.ts`, `src/composition.ts`, `src/server.ts`, `src/config/` | Express 5 app, `trust proxy`, request id, `/health`, the landing page at `/`, mount order, env parsing, wiring by injection, SIGTERM handler. | none |
-| infra | `infra/`, `.github/workflows/`, `Makefile` | `Dockerfile`, `cloudbuild.yaml`, `bootstrap.sh`, `ci-bootstrap.sh`, `deploy.sh` (the only place the `gcloud run deploy` flags live), `smoke.sh`, `domain.sh`, `observe.sh`, `pause.sh`, `pipeline.yml`, `local/` (compose, tunnel notes), `vm/` (documented alternative). | none |
+| infra | `infra/`, `.github/workflows/`, `Makefile` | `Dockerfile`, `cloudbuild.yaml`, `bootstrap.sh`, `ci-bootstrap.sh`, `deploy.sh` (the only place the `gcloud run deploy` flags live), `smoke.sh`, `domain.sh`, `observe.sh`, `pause.sh`, `pipeline.yml`, `local/` (compose, tunnel notes). | none |
 
 ## 3. Tech stack
 

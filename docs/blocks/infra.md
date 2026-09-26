@@ -13,6 +13,8 @@ The gcloud flags live in `deploy.sh` and nowhere else.
 | `infra/cloudbuild.yaml` | One `docker build -f infra/Dockerfile -t $_IMAGE .` step and `images: [$_IMAGE]`; never deploys. |
 | `infra/bootstrap.sh` | One-time: enable the APIs, create the `mcp-bank-run` service account, Secret Manager `mcp-bank-oauth-signing-key` (`openssl rand -base64 48`) and `mcp-bank-admin-token` (`openssl rand -hex 24`), bind `secretAccessor`; idempotent; never prints a secret. Ran for real on 2026-09-26. |
 | `infra/ci-bootstrap.sh` | One-time (D-24): the deployer service account `mcp-bank-deployer` that GitHub Actions impersonates through the existing Workload Identity pool `github-pool`: `artifactregistry.writer` on the `lake-fraude` repository, `run.admin` on the project, `serviceAccountUser` on `mcp-bank-run`, `workloadIdentityUser` for `principalSet://.../attribute.repository/frbarreto/glassbank`; retries bindings through IAM propagation; prints the GitHub variables to set; idempotent; `DRY_RUN=1`. Ran for real on 2026-09-26. |
+| `.github/workflows/pipeline.yml` | GitHub Actions (D-22 to D-24, `docs/DEPLOYMENT.md` section 15): `check`, `e2e`, `image` (build, boot, local smoke, SIGTERM exit check, push `mcp-bank:<sha12>` on `main`), `deploy` (`SKIP_BUILD=1 ./infra/deploy.sh`, then `smoke.sh`, job summary). Push to `main` deploys; `pull_request` never; `workflow_dispatch` redeploys an `image_tag` and sets `origin_policy`. Keyless through `mcp-bank-deployer`. |
+| `infra/pause.sh` | `pause` deletes the service (stops the bill); `resume` redeploys the newest Artifact Registry image (or `RESUME_TAG`) through `deploy.sh`; `make pause` / `make resume`; `DRY_RUN=1`. |
 | `infra/deploy.sh` | Cloud Build into Artifact Registry `lake-fraude`, `gcloud run deploy` with the canonical flags, then the `status.url` / `PUBLIC_HOSTS` correction. |
 | `infra/smoke.sh [BASE_URL]` | Ten checks: DNS, no cross-host redirect, the 401 challenge, discovery on every host, `/healthz`, Cloud Run invariants, public IAM, discovery latency, 30x `/register` without a 429, dashboard served. |
 | `infra/local/docker-compose.yml` | The production image on the Mac with `NODE_ENV=production`, every knob as an env passthrough, SQLite on a named volume, 1 CPU / 1 GiB, a `/healthz` probe, 15 s stop grace. |
@@ -51,13 +53,16 @@ DRY_RUN=1 ./infra/smoke.sh                     # resolves the target and exits 0
 bash infra/smoke.sh http://localhost:8080      # against a running server: 23 passed, 0 failed, 3 skipped
 bash infra/smoke.sh https://<tunnel-host>      # 24 passed, 5 failed: all five are the undeployed Cloud Run service (infra/local/cloudflared.md)
 docker compose -f infra/local/docker-compose.yml up --build   # the shipped image, NODE_ENV=production
+DRY_RUN=1 ./infra/ci-bootstrap.sh              # prints the deployer service account commands
+DRY_RUN=1 ./infra/pause.sh pause               # prints the delete; `resume` prints the redeploy of the newest image
+ruby -ryaml -e 'YAML.load_file(".github/workflows/pipeline.yml")'   # the workflow parses
+git push origin main                           # runs the pipeline: check, e2e, image, deploy + smoke; follow with `gh run watch`
 ```
 The cloud path (`make deploy && make smoke`) has never run.
 
 ## Known gaps
 - Nothing deployed: no service, secrets, service account or recorded `run.app` hostnames.
 - `deploy.sh` does not pass `GIT_SHA` to the container, so `server.started.git_sha` would be `null` in the cloud too.
-- Image tags fall back to a timestamp until the first commit exists.
 - The local image is arm64; Cloud Build produces amd64 from the same Dockerfile, untested locally.
 - `--platform=managed` is a hidden, default flag in current gcloud.
 - `smoke.sh` needs `jq` for strict JSON assertions; without it array checks are substring matches.

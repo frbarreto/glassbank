@@ -28,3 +28,14 @@ source of truth. Add a row in the same change that adds a dependency (CLAUDE.md 
 | `@types/node` | 26.5.0 | `tsc` | Node type definitions. |
 | `@types/express` | 5.0.6 | `tsc` | Express 5 types. |
 | `@types/better-sqlite3` | 9.6.0 | `tsc` | Types for the native module, which ships none. |
+
+## GitHub Actions (`.github/workflows/pipeline.yml`)
+
+Pinned to a major; each checked against the repository's latest release on 2026-09-26.
+
+| Action | Major | Why |
+|---|---|---|
+| `actions/checkout` | v7 | checkout |
+| `actions/setup-node` | v7 | Node from `.nvmrc`, npm cache |
+| `google-github-actions/auth` | v3 | keyless GCP credentials through Workload Identity Federation (D-24) |
+| `google-github-actions/setup-gcloud` | v3 | gcloud for `infra/deploy.sh` and `infra/smoke.sh` in the `deploy` job |

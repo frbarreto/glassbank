@@ -1,0 +1,194 @@
+# Glass Bank pipeline (block: infra; decisions D-22 to D-24, docs/DEPLOYMENT.md section 15).
+#
+# Every push to main: check -> e2e -> image (built, booted, smoked, then pushed to Artifact Registry
+# tagged with the 12-character git SHA) -> deploy (infra/deploy.sh with SKIP_BUILD=1, then
+# infra/smoke.sh against the live service). Pull requests run the first three jobs and never deploy.
+# workflow_dispatch redeploys an existing image tag (the rollback path) and can switch the Origin
+# policy. Authentication is keyless: the GitHub OIDC token is exchanged through the project's
+# Workload Identity pool for the deployer service account created by infra/ci-bootstrap.sh.
+#
+# Repository variables (Settings > Secrets and variables > Actions > Variables; none is a secret):
+#   GCP_PROJECT_ID     lake-fraude
+#   GCP_WIF_PROVIDER   projects/<number>/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+#   GCP_DEPLOYER_SA    mcp-bank-deployer@lake-fraude.iam.gserviceaccount.com
+#   PUBLIC_BASE_URL    https://<custom hostname>; unset until infra/domain.sh has mapped it (D-25)
+#
+# The gcloud run flags live only in infra/deploy.sh (CLAUDE.md invariant 12); this file never
+# calls `gcloud run deploy` itself.
+
+name: pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Existing image tag to redeploy (a 12-character git SHA). Empty: build and deploy this commit."
+        required: false
+        default: ""
+      origin_policy:
+        description: "ORIGIN_POLICY for this deploy (docs/DEPLOYMENT.md section 8)"
+        type: choice
+        options: [log-only, allowlist]
+        default: log-only
+
+permissions:
+  contents: read
+
+# One pipeline per ref at a time. Superseded pull-request runs are cancelled; main runs queue, so two
+# deploys never interleave.
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE_BASE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/lake-fraude/mcp-bank
+
+jobs:
+  check:
+    name: check (tsc, eslint, vitest)
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.image_tag == '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  e2e:
+    name: e2e (OAuth walk, session walk)
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.image_tag == '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run e2e
+
+  image:
+    name: image (build, boot, smoke, push on main)
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.image_tag == '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Image tag = first 12 characters of the commit SHA (what infra/deploy.sh derives locally)
+        id: tag
+        run: echo "tag=${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+
+      - name: Build the image
+        run: docker build -f infra/Dockerfile -t mcp-bank:ci .
+
+      - name: Boot the image with production settings and smoke it
+        run: |
+          set -euo pipefail
+          # NODE_ENV=production refuses the dev-only secret values, so the run gets fresh random ones.
+          docker run -d --name glass-bank -p 8080:8080 \
+            -e NODE_ENV=production -e PORT=8080 -e LOG_LEVEL=info \
+            -e PUBLIC_BASE_URL=http://localhost:8080 -e PUBLIC_HOSTS=localhost:8080 \
+            -e OAUTH_SIGNING_KEY="$(openssl rand -base64 48)" \
+            -e XRAY_ADMIN_TOKEN="$(openssl rand -hex 24)" \
+            mcp-bank:ci
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/healthz >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://localhost:8080/healthz
+          echo
+          bash infra/smoke.sh http://localhost:8080
+
+      - name: Stop the container (SIGTERM must finish in under 10 s, invariant 12)
+        if: always()
+        run: |
+          set -euo pipefail
+          if ! docker ps -aq --filter name=glass-bank | grep -q .; then exit 0; fi
+          docker stop -t 12 glass-bank || true
+          code="$(docker inspect --format '{{.State.ExitCode}}' glass-bank)"
+          echo "container exit code: $code"
+          docker logs --tail 40 glass-bank
+          test "$code" = "0"
+
+      - name: Authenticate to Google Cloud (main only, keyless)
+        if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+
+      - name: Push the image to Artifact Registry (main only)
+        if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+          docker tag mcp-bank:ci "$IMAGE_BASE:${{ steps.tag.outputs.tag }}"
+          docker push "$IMAGE_BASE:${{ steps.tag.outputs.tag }}"
+
+  deploy:
+    name: deploy (infra/deploy.sh, then infra/smoke.sh)
+    needs: [check, e2e, image]
+    # Runs after the three jobs above succeed, or when all three were skipped (a redeploy of an
+    # existing tag). Never on a pull request, never off main.
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && (needs.check.result == 'success' || needs.check.result == 'skipped') && (needs.e2e.result == 'success' || needs.e2e.result == 'skipped') && (needs.image.result == 'success' || needs.image.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag != '' && inputs.image_tag || needs.image.outputs.tag }}
+      ORIGIN_POLICY: ${{ inputs.origin_policy || 'log-only' }}
+      PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Deploy (every gcloud run flag lives in infra/deploy.sh)
+        env:
+          SKIP_BUILD: "1"
+        run: |
+          set -euo pipefail
+          test -n "$IMAGE_TAG"
+          ./infra/deploy.sh 2>&1 | tee deploy.log
+
+      - name: Smoke the live service
+        run: |
+          set -euo pipefail
+          if [ -n "${PUBLIC_BASE_URL:-}" ]; then
+            # Custom hostname mapped (D-25): check discovery on it and on the run.app host.
+            export SMOKE_BASE_URL="$PUBLIC_BASE_URL"
+            export SMOKE_HOSTS="${PUBLIC_BASE_URL#https://};mcp-bank-520283334162.us-central1.run.app"
+          fi
+          ./infra/smoke.sh 2>&1 | tee smoke.log
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Deploy"
+            echo '```'
+            sed -n '/^== Deployed/,$p' deploy.log 2>/dev/null || echo "(no deploy output)"
+            echo '```'
+            echo "## Smoke"
+            echo '```'
+            tail -6 smoke.log 2>/dev/null || echo "(no smoke output)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -48,7 +48,10 @@ bash infra/smoke.sh http://localhost:8080   # 23 pass / 0 fail / 3 skip with the
 node public/_dev/check-console.mjs          # the dashboard in headless Chrome over the fixture
 docker compose -f infra/local/docker-compose.yml up --build   # the shipped image
 cloudflared tunnel --url http://localhost:8080   # then restart with PUBLIC_BASE_URL = tunnel URL and PUBLIC_HOSTS = '<tunnel host>;localhost:8080'
-DRY_RUN=1 ./infra/deploy.sh   # prints every gcloud command; `make deploy` and `make smoke` run for real
+DRY_RUN=1 ./infra/deploy.sh   # prints every gcloud command; `make deploy` and `make smoke` run for real (the manual fallback)
+DRY_RUN=1 ./infra/ci-bootstrap.sh   # the GitHub Actions deployer service account (ran for real 2026-09-26)
+make pause / make resume      # delete the Cloud Run service to stop the bill / redeploy the newest image (infra/pause.sh)
+git push origin main          # runs .github/workflows/pipeline.yml: check, e2e, image, deploy + smoke (D-23)
 ```
 
 Dashboard: `http://localhost:8080/xray/?fixture=1` replays a recorded session; a connected client can call `xray_get_session_link` and open the `BANK-XXXX-XXXX-XX` link it returns.
@@ -82,4 +85,4 @@ Dashboard: `http://localhost:8080/xray/?fixture=1` replays a recorded session; a
 - gcloud flags live only in `infra/deploy.sh`. Never raise `--max-instances`, drop `--no-cpu-throttling`, lower `--timeout` or add `--use-http2`.
 - Never: a session map or `Mcp-Session-Id`; model-authored SQL on the main event loop; `McpServer.registerTool` for the catalog; the SDK auth router; filtering write tools out of `tools/list` for a missing write scope; binding pairing codes or viewer cookies to a grant instead of the login; advertising CIMD before it is implemented and observed; returning rows from a `load_*` tool; gating behaviour on `clientInfo.name` or `User-Agent`; a native dependency other than `better-sqlite3`, a front-end framework or bundler, Redis/Firestore or a second service without a `CHANGES.md` proposal.
 - Everything is in English, including comments, UI strings and seed labels. Amounts are USD cents (D-1).
-- Commits: `[block] summary` with a conventional body; branch `feat/<block>-<task>` or directly on `main` (no protection rules, D-22); commit or push only when asked; push only as GitHub account `frbarreto` over the HTTPS remote (D-21: the Mac's SSH key belongs to another account); never commit `.env` or secrets.
+- Commits: `[block] summary` with a conventional body; branch `feat/<block>-<task>` or directly on `main` (no protection rules, D-22); commit or push only when asked; push only as GitHub account `frbarreto` over the HTTPS remote (D-21: the Mac's SSH key belongs to another account); every push to `main` deploys through `.github/workflows/pipeline.yml` (D-23); never commit `.env` or secrets.

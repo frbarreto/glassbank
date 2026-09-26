@@ -1,5 +1,7 @@
 # Glass Bank
 
+[![pipeline](https://github.com/frbarreto/glassbank/actions/workflows/pipeline.yml/badge.svg)](https://github.com/frbarreto/glassbank/actions/workflows/pipeline.yml)
+
 A public remote MCP server for a fictional bank, plus an X-ray dashboard that shows in real time everything the server observes about a session: which tools were listed and called, with which arguments and rationale, what came back, how long it took, the auth and session facts behind it, and which of five actors - client app, model, this server, our engine, this page - authored each value.
 
 Every bank operation is mocked. Data is generated deterministically from a seed and lives in memory, with a per-grant SQLite scratch database for the Ramp-style "load, then SQL" pattern. The tool surface, scope model and OAuth shape follow Ramp's public MCP work; the observability layer is ours.

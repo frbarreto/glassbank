@@ -9,6 +9,7 @@ mcp_bank/
   CLAUDE.md  README.md  LICENSE  THIRD_PARTY_NOTICES.md  Makefile
   package.json  tsconfig.json  tsconfig.build.json  eslint.config.js  vitest.config.ts
   .nvmrc  .prettierrc  .env.example  .dockerignore  .gitignore
+  .github/workflows/pipeline.yml   CI/CD: check, e2e, image, deploy (owned by the infra block)
   docs/
     ARCHITECTURE.md  ASSUMPTIONS.md  BUILD_PLAN.md  DEPENDENCIES.md  DEPLOYMENT.md
     LOCAL_TESTING.md  RAMP_REFERENCE.md  REPO_LAYOUT.md  TOOL_CATALOG.md  XRAY_EVENT_MODEL.md

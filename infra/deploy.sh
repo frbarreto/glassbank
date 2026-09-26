@@ -69,9 +69,9 @@ run() {
 # ---------------------------------------------------------------------------------------------
 # Image tag
 #
-# CLAUDE.md invariant 12 says image tags are git SHAs. Decision D-10 keeps this repository on local
-# git only and nothing has been committed yet, so `git rev-parse HEAD` fails on a fresh clone or an
-# empty repository. In that case the tag falls back to a UTC timestamp, which is still unique and
+# CLAUDE.md invariant 12 says image tags are git SHAs. The pipeline (.github/workflows/pipeline.yml)
+# passes IMAGE_TAG explicitly: the first 12 characters of the commit SHA, the value derived here.
+# In a tree without git history the tag falls back to a UTC timestamp, which is still unique and
 # still traceable, and the script says so loudly.
 # ---------------------------------------------------------------------------------------------
 resolve_tag() {
@@ -95,8 +95,8 @@ resolve_tag() {
     say "image tag        : $IMAGE_TAG (git)"
   else
     IMAGE_TAG="ts-$(date -u +%Y%m%dT%H%M%SZ)"
-    warn "no git commit to tag from (Decision D-10: local git only, nothing committed yet)."
-    warn "falling back to a timestamp tag: $IMAGE_TAG. Once the first commit exists this becomes"
+    warn "no git commit to tag from (this tree has no git history)."
+    warn "falling back to a timestamp tag: $IMAGE_TAG. With git history this becomes"
     warn "a git SHA again, as CLAUDE.md invariant 12 requires."
     say "image tag        : $IMAGE_TAG (timestamp fallback)"
   fi

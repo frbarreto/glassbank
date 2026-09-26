@@ -1,7 +1,7 @@
 # Glass Bank - thin wrappers over npm scripts and infra/ (see docs/REPO_LAYOUT.md).
 # Real gcloud flags live only in infra/deploy.sh (CLAUDE.md invariant 12).
 
-.PHONY: dev check test build deploy smoke e2e smoke-worker-sqlite
+.PHONY: dev check test build deploy smoke e2e smoke-worker-sqlite pause resume
 
 dev:
 	npm run dev
@@ -26,3 +26,10 @@ deploy:
 
 smoke:
 	./infra/smoke.sh
+
+# D-25: stop the bill between demos, bring the same image back (infra/pause.sh).
+pause:
+	./infra/pause.sh pause
+
+resume:
+	./infra/pause.sh resume

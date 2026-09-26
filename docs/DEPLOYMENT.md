@@ -35,6 +35,8 @@ IMAGE_TAG=<tag> ./infra/deploy.sh                 # build and deploy under a cho
 SKIP_BUILD=1 IMAGE_TAG=<tag> ./infra/deploy.sh    # deploy only: reuse an image that already exists
 ```
 
+In the cloud the pipeline (section 15) builds and pushes the image itself and then runs this script with `SKIP_BUILD=1 IMAGE_TAG=<sha12>` (D-24); the Cloud Build path below is the manual fallback from the Mac.
+
 Steps, every one with `--project=lake-fraude --region=us-central1`:
 
 1. Build: `gcloud builds submit --config=infra/cloudbuild.yaml --substitutions=_IMAGE=<image> .` (the Dockerfile lives under `infra/`, so `--tag` cannot be used).
@@ -81,7 +83,7 @@ gcloud run services delete mcp-bank --region=us-central1   # stops the bill; sec
 ./infra/deploy.sh && ./infra/smoke.sh                       # resume; the run.app URL derives from name + project number, so it is identical
 ```
 
-There is no softer pause: `--min-instances=0` would let the instance idle out and stop the heartbeats, TTL eviction and fan-out (invariant 2). Resuming costs users what a deploy costs; they may need to reconnect once.
+`make pause` / `make resume` (`infra/pause.sh`) wrap these two commands; `resume` redeploys the newest image in Artifact Registry (or `RESUME_TAG`) and never rebuilds. There is no softer pause: `--min-instances=0` would let the instance idle out and stop the heartbeats, TTL eviction and fan-out (invariant 2). Resuming costs users what a deploy costs; they may need to reconnect once.
 
 ## 7. Rotate the signing key and the admin token
 
@@ -203,3 +205,15 @@ Parsed once in `src/config/index.ts` (zod; one `ConfigError` lists every problem
 ## 14. Local testing through a tunnel
 
 `infra/local/cloudflared.md`: `cloudflared tunnel --url http://localhost:8080`, restart the server with `PUBLIC_BASE_URL=https://<tunnel>.trycloudflare.com PUBLIC_HOSTS='<tunnel>.trycloudflare.com;localhost:8080'` (listing `localhost:8080` keeps the local dashboard working), run `bash infra/smoke.sh https://<tunnel>.trycloudflare.com`, then add the tunnel URL in claude.ai exactly as in section 13.
+
+## 15. CI/CD - `.github/workflows/pipeline.yml`
+
+GitHub Actions on https://github.com/frbarreto/glassbank (D-21 to D-24). Keyless: each job exchanges its GitHub OIDC token through the Workload Identity provider for `mcp-bank-deployer` (section 2, `infra/ci-bootstrap.sh`); nothing secret is stored in GitHub. Repository variables: `GCP_PROJECT_ID`, `GCP_WIF_PROVIDER`, `GCP_DEPLOYER_SA`, `PUBLIC_BASE_URL` (unset until the hostname is mapped, D-25).
+
+| Trigger | Jobs | Deploys |
+|---|---|---|
+| push to `main` | `check` (`npm run check`), `e2e` (`npm run build && npm run e2e`), `image` (build `infra/Dockerfile`, boot it with `NODE_ENV=production` and random secrets, `infra/smoke.sh http://localhost:8080`, stop it and assert exit 0, push `mcp-bank:<sha12>`), then `deploy` | yes |
+| `pull_request` | `check`, `e2e`, `image` without the push | no |
+| `workflow_dispatch` | `image_tag` empty: as a push; `image_tag=<sha12>`: `deploy` only (the rollback, section 5); `origin_policy` selects `log-only` or `allowlist` (section 8) | yes, from `main` only |
+
+`deploy` runs `SKIP_BUILD=1 IMAGE_TAG=<sha12> ORIGIN_POLICY=<input> PUBLIC_BASE_URL=<variable> ./infra/deploy.sh`, then `./infra/smoke.sh` (with `SMOKE_BASE_URL` and `SMOKE_HOSTS` covering the custom hostname and the `run.app` host once `PUBLIC_BASE_URL` is set), and writes the deploy summary and the smoke counts to the job summary. `<sha12>` is the value `deploy.sh` derives locally, so `make deploy` of the same commit reuses the tag. Runs on `main` queue behind each other; superseded pull-request runs are cancelled. Fork pull requests get no OIDC token, so they can never deploy.

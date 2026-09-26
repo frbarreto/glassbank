@@ -1,0 +1,45 @@
+{
+  "name": "glass-bank",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Glass Bank - a public remote MCP server for a fictional bank plus a live X-ray dashboard.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "login": "node scripts/local-login.mjs",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm run lint && npm run test",
+    "e2e": "npm run e2e:oauth && npm run e2e:session",
+    "e2e:oauth": "node test/e2e/oauth-walk.mjs",
+    "e2e:session": "node test/e2e/session-walk.mjs",
+    "e2e:dashboard": "node test/e2e/live-dashboard.mjs",
+    "smoke:worker-sqlite": "node scripts/smoke-worker-sqlite.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "better-sqlite3": "13.0.3",
+    "express": "5.2.1",
+    "jose": "6.2.12",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/express": "5.0.6",
+    "@types/node": "26.5.0",
+    "eslint": "10.10.0",
+    "prettier": "3.9.6",
+    "tsx": "4.23.13",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.70.0",
+    "vitest": "3.2.7"
+  }
+}

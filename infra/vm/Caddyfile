@@ -1,0 +1,42 @@
+# Glass Bank on a Compute Engine VM - option A: nip.io hostname (block: infra, task T0.4).
+#
+# nip.io resolves <anything>.<ip-with-dashes>.nip.io to <ip>, so a static external IP gives you a
+# real DNS name without owning a domain, and Let's Encrypt can issue a normal HTTP-01 certificate
+# for it. This is the safer of the two options: plain public-suffix DNS, ordinary certificate.
+#
+# Set SITE_ADDRESS to the nip.io name of the VM's static IP, for example:
+#   SITE_ADDRESS=34-30-1-2.nip.io ACME_EMAIL=you@example.com docker compose up -d
+#
+# PUBLIC_BASE_URL on the app container must be exactly https://$SITE_ADDRESS - never the http://
+# form Caddy redirects from, because the PRM `resource` is compared literally (A-36).
+{
+	email {$ACME_EMAIL}
+	# Uncomment while testing to avoid Let's Encrypt rate limits:
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	log {
+		output stdout
+		format console
+	}
+
+	reverse_proxy mcp-bank:8080 {
+		# SSE: never buffer. The X-ray dashboard stream and the MCP streamable transport both
+		# depend on chunks reaching the client immediately (CLAUDE.md invariant 3).
+		flush_interval -1
+
+		# Speak HTTP/1.1 to the app, exactly as Cloud Run does. SSE rides HTTP/1.1 chunked
+		# responses; no HTTP/2 anywhere in this chain.
+		transport http {
+			versions 1.1
+			dial_timeout 10s
+			# No response timeout: an SSE stream stays open for as long as the client keeps it.
+		}
+
+		# Caddy already sets X-Forwarded-For / -Proto / -Host by default; the app reads them
+		# through Express `trust proxy` (CLAUDE.md invariant 12). Nothing to add here.
+	}
+}

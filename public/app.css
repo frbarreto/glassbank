@@ -1,0 +1,4089 @@
+/* Glass Bank X-ray - dashboard styles (block: dashboard).
+ *
+ * One palette, defined once as tokens on :root and redefined for dark. Both an explicit
+ * data-theme choice and the operating-system preference are honoured, and every colour a panel
+ * uses is a token, so the two themes can never drift apart.
+ *
+ * Density is deliberate: this page is read while something is happening, so the timeline row is
+ * the unit the whole layout is tuned around.
+ */
+
+/* ---------------------------------------------------------------- tokens -- */
+
+:root {
+  color-scheme: light;
+
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --surface-2: #f8fafb;
+  --surface-3: #eef1f5;
+  --border: #dee3ea;
+  --border-strong: #c3cbd6;
+  --text: #0f151d;
+  --text-2: #47525f;
+  --text-3: #6d7887;
+
+  --accent: #2f6bb5;
+  --accent-text: #21538f;
+  --accent-soft: #e7f0fb;
+  --ok: #1c7a4c;
+  --ok-soft: #e2f3ea;
+  --warn: #8f5c05;
+  --warn-soft: #fbf0da;
+  --error: #ad2020;
+  --error-soft: #fbe8e8;
+  --violet: #6248ad;
+  --violet-soft: #eeeafa;
+
+  --fam-server: #6248ad;
+  --fam-http: #6d7887;
+  --fam-auth: #8f5c05;
+  --fam-session: #0e7076;
+  --fam-catalog: #3a56ad;
+  --fam-tool: #21538f;
+  --fam-protocol: #ad2020;
+  --fam-bank: #1c7a4c;
+  --fam-etl: #0b6d86;
+  --fam-sql: #7a3b96;
+  --fam-intent: #a03a72;
+  --fam-xray: #4b5a6b;
+  --fam-other: #6d7887;
+
+  /* Who authored a thing, which is a different question from which family an event belongs to.
+     Five hues, far enough apart to be told apart at a 3px rail: see public/provenance.js. */
+  --who-agent: #0e7076;
+  --who-model: #a03a72;
+  --who-server: #6248ad;
+  --who-engine: #1c7a4c;
+  --who-page: #6d7887;
+
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --btn-primary-text: #ffffff;
+  --radius: 8px;
+  --radius-sm: 5px;
+  --shadow: 0 1px 2px rgba(15, 21, 29, 0.06), 0 4px 14px rgba(15, 21, 29, 0.05);
+  --row-h: 30px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --bg: #0b0f14;
+    --surface: #141a21;
+    --surface-2: #182029;
+    --surface-3: #1f2833;
+    --border: #253039;
+    --border-strong: #3a4753;
+    --text: #e7ecf2;
+    --text-2: #a7b3c0;
+    --text-3: #7c8794;
+
+    --accent: #6ea6f2;
+    --accent-text: #8fbcf7;
+    --accent-soft: #14263c;
+    --ok: #56c48c;
+    --ok-soft: #0f2a1f;
+    --warn: #dfae60;
+    --warn-soft: #2c2413;
+    --error: #ef8686;
+    --error-soft: #331a1b;
+    --violet: #a78cf0;
+    --violet-soft: #201a31;
+
+    --fam-server: #a78cf0;
+    --fam-http: #8794a2;
+    --fam-auth: #dfae60;
+    --fam-session: #4fc0c6;
+    --fam-catalog: #8aa2f0;
+    --fam-tool: #6ea6f2;
+    --fam-protocol: #ef8686;
+    --fam-bank: #56c48c;
+    --fam-etl: #4fb8d8;
+    --fam-sql: #c691e0;
+    --fam-intent: #ec8ec0;
+    --fam-xray: #93a3b3;
+    --fam-other: #8794a2;
+
+    --who-agent: #4fc0c6;
+    --who-model: #ec8ec0;
+    --who-server: #a78cf0;
+    --who-engine: #56c48c;
+    --who-page: #8794a2;
+
+    --btn-primary-text: #08121e;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 18px rgba(0, 0, 0, 0.3);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0b0f14;
+  --surface: #141a21;
+  --surface-2: #182029;
+  --surface-3: #1f2833;
+  --border: #253039;
+  --border-strong: #3a4753;
+  --text: #e7ecf2;
+  --text-2: #a7b3c0;
+  --text-3: #7c8794;
+
+  --accent: #6ea6f2;
+  --accent-text: #8fbcf7;
+  --accent-soft: #14263c;
+  --ok: #56c48c;
+  --ok-soft: #0f2a1f;
+  --warn: #dfae60;
+  --warn-soft: #2c2413;
+  --error: #ef8686;
+  --error-soft: #331a1b;
+  --violet: #a78cf0;
+  --violet-soft: #201a31;
+
+  --fam-server: #a78cf0;
+  --fam-http: #8794a2;
+  --fam-auth: #dfae60;
+  --fam-session: #4fc0c6;
+  --fam-catalog: #8aa2f0;
+  --fam-tool: #6ea6f2;
+  --fam-protocol: #ef8686;
+  --fam-bank: #56c48c;
+  --fam-etl: #4fb8d8;
+  --fam-sql: #c691e0;
+  --fam-intent: #ec8ec0;
+  --fam-xray: #93a3b3;
+  --fam-other: #8794a2;
+
+  --who-agent: #4fc0c6;
+  --who-model: #ec8ec0;
+  --who-server: #a78cf0;
+  --who-engine: #56c48c;
+  --who-page: #8794a2;
+
+  --btn-primary-text: #08121e;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+
+/* ------------------------------------------------------------------ base -- */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 13.5px/1.5 var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 0.92em;
+  font-variant-ligatures: none;
+}
+
+.muted {
+  color: var(--text-3);
+}
+
+.wrap {
+  overflow-wrap: anywhere;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.block {
+  display: block;
+}
+
+.is-error {
+  color: var(--error);
+}
+
+kbd {
+  font-family: var(--mono);
+  font-size: 0.85em;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0 4px;
+  color: var(--text-2);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+/* ---------------------------------------------------------------- layout -- */
+
+.app {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  height: 100vh;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 19rem minmax(0, 1fr) minmax(25rem, 31rem);
+  gap: 10px;
+  padding: 0 12px 10px;
+  min-height: 0;
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  min-height: 0;
+  overflow: auto;
+}
+
+.panel-timeline {
+  display: flex;
+  overflow: hidden;
+}
+
+.panel-detail-wrap {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.detail-body {
+  overflow: auto;
+  padding: 0 14px 18px;
+}
+
+@media (max-width: 1240px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr) minmax(24rem, 26rem);
+  }
+  .panel-sessions {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .app {
+    height: auto;
+  }
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .panel {
+    max-height: 80vh;
+  }
+}
+
+/* ---------------------------------------------------------------- header -- */
+
+.header {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.header-inner {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 9px 14px;
+  flex-wrap: wrap;
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.brand-mark {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  font-size: 15px;
+}
+
+.brand-sub {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--accent-text);
+  border: 1px solid var(--border);
+  background: var(--accent-soft);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.header-stats {
+  display: flex;
+  gap: 14px;
+}
+
+.header-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.stat-value {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.stat-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+.stat-ok .stat-value {
+  color: var(--ok);
+}
+.stat-warn .stat-value {
+  color: var(--warn);
+}
+.stat-error .stat-value {
+  color: var(--error);
+}
+
+.stat-row {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 10px 0 12px;
+}
+
+.viewer-chip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 7px;
+  font-size: 12px;
+  color: var(--text-2);
+  min-width: 0;
+}
+
+.viewer-detail {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.fixture-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.fixture-rate {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.fixture-progress {
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+/* ------------------------------------------------------- banner and now -- */
+
+.banner-slot:empty,
+.now-slot:empty {
+  display: none;
+}
+
+.stream-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 12px 0;
+  padding: 8px 11px;
+  border-radius: var(--radius);
+  border: 1px solid var(--warn);
+  background: var(--warn-soft);
+  color: var(--text);
+}
+
+.stream-banner.state-closed {
+  border-color: var(--error);
+  background: var(--error-soft);
+}
+
+.banner-text {
+  font-weight: 550;
+}
+
+.banner-detail {
+  color: var(--text-2);
+}
+
+.stream-banner .btn {
+  margin-left: auto;
+}
+
+.now-strip {
+  display: grid;
+  grid-template-columns: auto minmax(6rem, 1fr) auto;
+  grid-template-areas: "lead bar numbers" "meta meta meta";
+  align-items: center;
+  gap: 6px 14px;
+  margin: 8px 12px 10px;
+  padding: 9px 13px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.now-strip.is-live {
+  border-left-color: var(--accent);
+}
+
+.now-strip.is-done {
+  border-left-color: var(--border-strong);
+}
+
+.now-strip.is-idle {
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas: "lead bar";
+  color: var(--text-3);
+}
+
+.now-lead {
+  grid-area: lead;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.now-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-3);
+}
+
+.now-detail {
+  grid-area: bar;
+  color: var(--text-3);
+}
+
+.now-tool {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--accent-text);
+  cursor: pointer;
+}
+
+.now-bar {
+  grid-area: bar;
+}
+
+.now-numbers {
+  grid-area: numbers;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.now-elapsed {
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.now-budget,
+.now-share {
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+.now-meta {
+  grid-area: meta;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  color: var(--text-2);
+  font-size: 12px;
+  min-width: 0;
+}
+
+.now-rationale {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.now-rationale.is-missing {
+  color: var(--warn);
+  font-style: italic;
+}
+
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 60%, transparent);
+  animation: pulse 1.8s ease-out infinite;
+  flex: none;
+}
+
+@keyframes pulse {
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot {
+    animation: none;
+  }
+}
+
+/* -------------------------------------------------------------- controls -- */
+
+.btn {
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 3px 9px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--btn-primary-text);
+}
+
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.07);
+  color: var(--btn-primary-text);
+}
+
+.btn-accent {
+  border-color: var(--accent);
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+
+.btn-quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-2);
+}
+
+.btn-quiet:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+
+.btn-chip {
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 11.5px;
+  background: var(--surface-2);
+}
+
+.btn-chip[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.btn-chip-clear {
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 11.5px;
+  border-style: dashed;
+}
+
+/* The two-way switch between the call blocks and the event log. */
+.timeline-modes {
+  display: inline-flex;
+  flex: none;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.btn-seg {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-2);
+  padding: 4px 11px;
+}
+
+.btn-seg + .btn-seg {
+  border-left: 1px solid var(--border-strong);
+}
+
+.btn-seg:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.btn-seg[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+/* Erasing is destructive and irreversible, so its controls say so before they are clicked. */
+.btn-danger {
+  background: var(--error);
+  border-color: var(--error);
+  color: var(--btn-primary-text);
+}
+
+.btn-danger:hover:not(:disabled) {
+  filter: brightness(1.07);
+  color: var(--btn-primary-text);
+}
+
+.btn-danger-quiet {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--error) 45%, transparent);
+  color: var(--error);
+}
+
+.btn-danger-quiet:hover:not(:disabled) {
+  border-color: var(--error);
+  color: var(--error);
+  background: var(--error-soft);
+}
+
+.btn-row-danger {
+  padding: 1px 7px;
+  font-size: 10.5px;
+  border-radius: 999px;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-3);
+}
+
+.btn-row-danger:hover:not(:disabled) {
+  border-color: var(--error);
+  color: var(--error);
+  background: var(--error-soft);
+}
+
+.btn-link {
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  text-decoration: underline;
+  padding: 0;
+}
+
+.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent-text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.field-grow {
+  flex: 1;
+}
+
+.field-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+.input {
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 5px 9px;
+  font-size: 12.5px;
+  width: 100%;
+}
+
+.input::placeholder {
+  color: var(--text-3);
+}
+
+.input-code {
+  font-size: 17px;
+  letter-spacing: 0.1em;
+  padding: 9px 12px;
+  text-transform: uppercase;
+}
+
+/* --------------------------------------------------------------- badges -- */
+
+.badge {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 17px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.badge-ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 35%, transparent);
+}
+.badge-error {
+  background: var(--error-soft);
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 40%, transparent);
+}
+.badge-warn,
+.badge-denied {
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 35%, transparent);
+}
+.badge-running {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.badge-notice {
+  background: var(--violet-soft);
+  color: var(--violet);
+  border-color: color-mix(in srgb, var(--violet) 35%, transparent);
+}
+.badge-info {
+  background: var(--surface-3);
+  color: var(--text-2);
+  border-color: var(--border);
+}
+
+.tag {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.tag-strong {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  font-weight: 600;
+}
+.tag-warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 30%, transparent);
+}
+.tag-ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 30%, transparent);
+}
+.tag-quiet {
+  background: transparent;
+}
+
+.prov {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.fam {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-align: center;
+  padding: 1px 0;
+  border-radius: 3px;
+  color: var(--fam-other);
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  min-width: 40px;
+  flex: none;
+}
+
+.fam-server {
+  color: var(--fam-server);
+}
+.fam-http {
+  color: var(--fam-http);
+}
+.fam-auth {
+  color: var(--fam-auth);
+}
+.fam-session {
+  color: var(--fam-session);
+}
+.fam-catalog {
+  color: var(--fam-catalog);
+}
+.fam-tool {
+  color: var(--fam-tool);
+}
+.fam-protocol {
+  color: var(--fam-protocol);
+}
+.fam-bank {
+  color: var(--fam-bank);
+}
+.fam-etl {
+  color: var(--fam-etl);
+}
+.fam-sql {
+  color: var(--fam-sql);
+}
+.fam-intent {
+  color: var(--fam-intent);
+}
+.fam-xray {
+  color: var(--fam-xray);
+}
+
+/* ------------------------------------------------------------- timeline -- */
+
+.timeline {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: 100%;
+  min-height: 0;
+}
+
+.timeline-toolbar {
+  padding: 9px 12px 7px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  display: grid;
+  gap: 7px;
+}
+
+.toolbar-line {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.toolbar-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.toolbar-chips {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.toolbar-count {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-scroll {
+  overflow: auto;
+  min-height: 0;
+  padding: 4px 0 10px;
+}
+
+.timeline-truncation {
+  margin: 6px 12px;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 5.6rem 40px minmax(0, 1fr) 8.6rem auto;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: var(--row-h);
+  padding: 3px 12px;
+  border: 0;
+  border-left: 3px solid transparent;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.row:hover {
+  background: var(--surface-2);
+}
+
+.row.is-selected {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+
+.row-error {
+  border-left-color: color-mix(in srgb, var(--error) 70%, transparent);
+}
+.row-warn,
+.row-denied {
+  border-left-color: color-mix(in srgb, var(--warn) 60%, transparent);
+}
+.row-running {
+  border-left-color: var(--accent);
+}
+.row-ok {
+  border-left-color: color-mix(in srgb, var(--ok) 45%, transparent);
+}
+
+.row-unknown {
+  border-left-style: dashed;
+  border-left-color: var(--text-3);
+}
+
+.row-time {
+  color: var(--text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.row-body {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  min-width: 0;
+}
+
+.row-label {
+  font-weight: 600;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.row-summary {
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.row-latency {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-end;
+}
+
+.row-latency-text {
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.row-latency .meter {
+  width: 7rem;
+}
+
+.boot-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px 8px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+.boot-rule {
+  flex: 1;
+  height: 1px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--border-strong) 0 4px,
+    transparent 4px 8px
+  );
+}
+
+.boot-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--violet);
+}
+
+.boot-id,
+.boot-time {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.boot-divider.is-selected .boot-label {
+  color: var(--accent-text);
+}
+
+.timeline-paused {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--warn-soft);
+  font-weight: 600;
+}
+
+.timeline-paused .btn {
+  margin-left: auto;
+}
+
+/* ----------------------------------------------------- timeline: chain -- */
+/* Episodes, and inside each one a single column of calls hanging off a continuous left rail.
+   The rail plus the connector labels sitting on it are what make the hand-offs visible: the
+   reader should be able to follow one line down the page and read what each call passed on. */
+
+.timeline-scroll-chain {
+  padding: 8px 12px 14px;
+}
+
+.flow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.episode {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.episode-head {
+  padding: 9px 12px 8px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.episode-head-line {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.episode-ordinal {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.episode-workflow {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.episode-workflow-name {
+  font-size: 12.5px;
+  font-weight: 650;
+  text-transform: capitalize;
+  color: var(--fam-intent);
+}
+
+.episode-workflow-confidence {
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.episode-facts {
+  font-size: 11.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.episode-facts + .episode-facts {
+  padding-left: 9px;
+  border-left: 1px solid var(--border);
+}
+
+/* The two voices in an episode header: the model's own sentence, and this page's grouping rule.
+   Both carry the colour the legend gives them, so the header explains itself. */
+.episode-rationale {
+  margin: 7px 0 0;
+  border-left-color: var(--who-model);
+}
+
+.episode-rule.band-page {
+  border-left: 3px dashed color-mix(in srgb, var(--who-page) 55%, transparent);
+  padding-left: 9px;
+}
+
+.episode-no-rationale {
+  margin: 7px 0 0;
+  font-size: 12px;
+}
+
+.episode-rule {
+  margin: 7px 0 0;
+  line-height: 1.45;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* The rule that produced this particular group: read once, then never again. */
+.episode-why {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.episode-why-body {
+  margin: 5px 0 0;
+  padding-left: 9px;
+  border-left: 3px dashed color-mix(in srgb, var(--who-page) 55%, transparent);
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.episode-filtered {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 11.5px;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+/* One episode holds one stack of threads; a thread is one unbroken chain of calls. */
+.episode-threads {
+  display: grid;
+  gap: 12px;
+  padding: 10px 12px 12px;
+  min-width: 0;
+}
+
+.chain-thread {
+  min-width: 0;
+}
+
+.chain-thread-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 5px;
+  padding-left: 2px;
+  min-width: 0;
+}
+
+.chain-thread-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-3);
+}
+
+/* The artefact a thread carries is this page's reading of the events, like the connectors. */
+.chain-thread-what {
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--who-page);
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chain-thread-preview {
+  color: var(--fam-bank);
+}
+
+.chain-thread-id {
+  color: var(--fam-intent);
+}
+
+.chain-thread-count {
+  font-size: 10.5px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The rail. It runs the height of one thread, and every call and connector hangs off it. */
+.chain-thread-steps {
+  position: relative;
+  padding-left: 22px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chain-thread-steps::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 17px;
+  bottom: 17px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--border-strong);
+}
+
+/* A thread of one call has nothing to connect to, so it gets no rail and no node. */
+.chain-thread.is-single .chain-thread-steps {
+  padding-left: 0;
+}
+
+.chain-thread.is-single .chain-thread-steps::before,
+.chain-thread.is-single .call::before {
+  display: none;
+}
+
+/* ------------------------------------------------------ open state -- */
+/* The control that opens and closes a block: `public/ui.js` disclosure, one shape everywhere. */
+.disclosure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.disclosure-glyph {
+  flex: none;
+  width: 12px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-2);
+}
+
+.disclosure.is-open > .disclosure-glyph {
+  color: var(--text-2);
+}
+
+/* The toolbar's first line carries two more controls now; without a floor the filter box shrinks
+   to a couple of characters at phone width instead of letting the line wrap. */
+.timeline-toolbar .field-grow {
+  min-width: 10rem;
+}
+
+/* Depth: how much of a call a reader who has clicked nothing sees. */
+.timeline-depth {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 6px;
+}
+
+.timeline-depth-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+}
+
+.timeline-depth .btn-seg {
+  border: 1px solid var(--border-strong);
+  border-radius: 0;
+  margin-left: -1px;
+}
+
+.timeline-depth .btn-seg:first-of-type {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  margin-left: 0;
+}
+
+.timeline-depth .btn-seg:last-of-type {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+/* The episode header's own toggle, and the button that folds its calls back to one line each. */
+.episode-toggle {
+  gap: 7px;
+}
+
+.episode-collapse {
+  margin-left: auto;
+}
+
+/* ------------------------------------------------------- who authored it --
+   One hue per party, set once as `--who` and read by every rail, dot and value below. Colour on
+   this page means the actor and nothing else: not the phase, not the event family, not the
+   severity - which is why a status is a glyph plus a word rather than a red pill. The hues are
+   the `--who-*` tokens; the meaning is in public/provenance.js and, for the reader, in the
+   legend above the timeline. */
+
+.who-agent {
+  --who: var(--who-agent);
+}
+.who-model {
+  --who: var(--who-model);
+}
+.who-server {
+  --who: var(--who-server);
+}
+.who-engine {
+  --who: var(--who-engine);
+}
+.who-page {
+  --who: var(--who-page);
+}
+
+/* Focusing one voice pushes the others back; it never removes them, because a page with a hole in
+   it would be a different claim about what happened. The connector and the grouping sentence dim
+   on the same rule, so focusing "this page" lights exactly the marks this page draws. */
+.is-dimmed,
+.chain-link.is-dimmed,
+.episode-rule.is-dimmed,
+.episode-why-body.is-dimmed,
+.episode-rationale.is-dimmed {
+  opacity: 0.32;
+}
+
+/* -------------------------------------------------------------- one call --
+   The line: the JSON-RPC id, the clock, the tool, the status, how long it took, then what the
+   model sent and what the server sent back. Both digests are recorded bytes. Anything this page
+   worked out lives on the connectors and the thread heads, in the dashed page colour. */
+
+.call {
+  position: relative;
+  min-width: 0;
+}
+
+.call::before {
+  content: "";
+  box-sizing: border-box;
+  position: absolute;
+  left: -19px;
+  top: 9px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--border-strong);
+}
+
+.call-row {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  min-width: 0;
+}
+
+.call-row-ok {
+  border-left-color: var(--ok);
+}
+.call-row-error {
+  border-left-color: var(--error);
+}
+.call-row-denied,
+.call-row-cancelled {
+  border-left-color: var(--warn);
+}
+.call-row-running {
+  border-left-color: var(--accent);
+}
+
+.call-row.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.call-row.is-open {
+  background: var(--surface-2);
+}
+
+.call-head {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 4px 6px 9px;
+  align-items: baseline;
+}
+
+.call-head:hover {
+  background: var(--surface-2);
+}
+
+.call-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 3px 9px;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+}
+
+/* The one number a call has: its JSON-RPC id. Nothing else on the row is counted. */
+.call-id {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.call-time {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.call-tool {
+  flex: none;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* A glyph and a word, in the ordinary text colour: the five hues are spoken for. */
+.call-status {
+  flex: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.call-status.is-notable {
+  color: var(--text-2);
+  font-weight: 650;
+}
+
+.call-status-glyph {
+  font-size: 11px;
+}
+
+.call-took {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.call-digest {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: 1 1 40rem;
+  min-width: 0;
+}
+
+/* The two halves keep the same width down the page, so the arrow reads as a column rather than
+   as punctuation. They wrap rather than shrink: a squeezed value is a value the reader cannot
+   see, and finding the inputs and the outputs is the whole point of the row. */
+.call-in,
+.call-out {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 1px 10px;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.call-arrow {
+  flex: none;
+  color: var(--text-3);
+}
+
+/* How much was sent and how much was kept is short and is the one thing that must not be cut. */
+.call-out > .digest-part:last-child {
+  flex: none;
+}
+
+.digest-part {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.digest-key {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.digest-key::after {
+  content: ":";
+}
+
+/* The value is in the colour of whoever wrote it, mixed towards the text colour so a whole line
+   of it stays readable. */
+.digest-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--who, var(--text-2)) 70%, var(--text));
+}
+
+.digest-part.is-error .digest-value {
+  color: var(--error);
+}
+
+.digest-part.is-warn .digest-value {
+  color: var(--warn);
+}
+
+.digest-chip {
+  flex: none;
+}
+
+.call-dots {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.call-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--who, var(--who-page));
+}
+
+.call-overlap {
+  flex: none;
+}
+
+.call-bytes {
+  flex: none;
+  align-self: center;
+  margin-right: 7px;
+  padding: 1px 7px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text-3);
+}
+
+.call-bytes:hover {
+  color: var(--text);
+}
+
+/* A small rounded label; the actor colours it, `warn` marks an absence without naming a party. */
+.pill {
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--who, var(--border-strong)) 45%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--who, var(--surface-3)) 8%, var(--surface));
+  color: color-mix(in srgb, var(--who, var(--text-2)) 70%, var(--text));
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.pill.who-page {
+  border-style: dashed;
+}
+
+.pill-warn {
+  border-color: color-mix(in srgb, var(--warn) 60%, var(--border));
+  background: color-mix(in srgb, var(--warn) 10%, var(--surface));
+  color: var(--warn);
+}
+
+/* --------------------------------------------------- the three panes --
+   REQUEST is only what the client sent. Everything this server did on receipt - the scope check,
+   the redaction, recording the stated intent - is INSIDE, because putting it in the request
+   column is what made the old board unreadable. */
+
+.call-open {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(8rem, 14rem) minmax(0, 1fr);
+  gap: 10px 14px;
+  align-items: start;
+  padding: 9px 10px 11px;
+  border-top: 1px solid var(--border);
+  min-width: 0;
+}
+
+.wire,
+.inside {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.wire-title {
+  margin: 0 0 6px;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.wire-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wire-row {
+  display: grid;
+  grid-template-columns: 3px minmax(3.5rem, 8rem) minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 7px;
+  row-gap: 2px;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.wire-rail {
+  grid-row: 1 / -1;
+  align-self: stretch;
+  width: 3px;
+  min-height: 13px;
+  border-radius: 2px;
+  background: var(--who, var(--who-page));
+}
+
+/* A row with no key - the denial sentence, the observer sentence - takes the whole width. */
+.wire-row > .wire-rail + .wire-value {
+  grid-column: 2 / -1;
+}
+
+/* Implied, not recorded: the dashed page rail, and never a rail that reads as a stored value. */
+.wire-row.is-implied .wire-rail {
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--who-page) 0 3px,
+    transparent 3px 6px
+  );
+}
+
+.wire-key {
+  font-size: 10.5px;
+  color: var(--text-3);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.wire-key::after {
+  content: ":";
+}
+
+.wire-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: color-mix(in srgb, var(--who, var(--text-2)) 68%, var(--text));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 6px;
+}
+
+.wire-row > .wire-value > .jv {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+/* The one place the model writes prose: it takes the whole row and is never clipped. */
+.wire-rationale {
+  margin: 4px 0;
+  min-width: 0;
+}
+
+.wire-rationale-row {
+  background: color-mix(in srgb, var(--who-model) 8%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 3px 4px 3px 0;
+}
+
+.wire-quote {
+  flex: 1 1 100%;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.wire-quote::before {
+  content: "\201C";
+}
+
+.wire-quote::after {
+  content: "\201D";
+}
+
+.wire-note,
+.wire-footer {
+  margin: 4px 0 0;
+  padding-left: 8px;
+  border-left: 2px solid color-mix(in srgb, var(--who, var(--border-strong)) 55%, transparent);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-3);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Worked out by this page, so it says so the only way a rail can: dashed. */
+.wire-note.who-page,
+.wire-footer.who-page {
+  border-left-style: dashed;
+}
+
+.wire-footer {
+  margin-top: 8px;
+}
+
+.wire-error .wire-value {
+  color: var(--error);
+}
+
+.wire-error.is-denied .wire-value,
+.wire-error.is-warn .wire-value {
+  color: var(--warn);
+}
+
+.wire-ratios,
+.wire-ports {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin-top: 6px;
+  min-width: 0;
+}
+
+.wire-raw {
+  margin-top: 8px;
+  min-width: 0;
+}
+
+.wire-raw-toggle {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+/* The middle column: one pill saying what ran, and the cards a click away. */
+.inside-toggle {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-3);
+  align-items: baseline;
+}
+
+.inside-toggle:hover {
+  border-color: var(--who-server);
+}
+
+.inside-summary {
+  font-size: 11.5px;
+  color: var(--text-2);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The cards are the widest thing here, so they take the whole triptych under the two wire panes. */
+.inside-cards {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.card {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 6px 8px 6px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  min-width: 0;
+}
+
+.card-rail {
+  flex: none;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--who, var(--who-page));
+}
+
+.card-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 3px 8px;
+  min-width: 0;
+}
+
+.card-n {
+  flex: none;
+  min-width: 17px;
+  height: 17px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.card-who {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--who, var(--who-page));
+}
+
+.card-title {
+  font-size: 11.5px;
+  color: var(--text-2);
+  min-width: 0;
+}
+
+.card-source {
+  font-size: 10.5px;
+  color: var(--text-3);
+  margin-left: auto;
+}
+
+.card-side {
+  display: grid;
+  grid-template-columns: 1.7rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 7px;
+  margin-top: 3px;
+  min-width: 0;
+}
+
+.card-side-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-3);
+  text-align: right;
+}
+
+.card-side-lines {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  min-width: 0;
+  font-size: 11.5px;
+}
+
+.card-line {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.card-line-rail {
+  flex: none;
+  align-self: stretch;
+  width: 2px;
+  min-height: 11px;
+  border-radius: 1px;
+  background: var(--who, var(--who-page));
+}
+
+.card-key {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.card-key::after {
+  content: ":";
+}
+
+.card-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+.card-line.is-error .card-value {
+  color: var(--error);
+}
+
+.card-line.is-warn .card-value {
+  color: var(--warn);
+}
+
+.card-value.is-quote::before {
+  content: "\201C";
+}
+
+.card-value.is-quote::after {
+  content: "\201D";
+}
+
+.card-note {
+  margin: 5px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+/* Under a laptop width the three panes read better stacked than squeezed. */
+@media (max-width: 900px) {
+  .call-open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The connector: a short piece of rail with the label of what flowed sitting on it. */
+.chain-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  padding: 3px 0;
+}
+
+.chain-link-rail {
+  position: absolute;
+  left: -14px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--who-page);
+  border-radius: 1px;
+}
+
+.chain-link-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+/* The connector is this page's reading of the events, not something the server recorded, so it
+   wears the `page` colour of the legend rather than the accent. This is also where the captions
+   the row no longer prints live - "table load_x", "6 rows" - marked for what they are. */
+.chain-link-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px dashed color-mix(in srgb, var(--who-page) 55%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--who-page) 8%, var(--surface));
+  font-size: 11.5px;
+  min-width: 0;
+}
+
+.chain-link-verb {
+  color: var(--text-3);
+}
+
+.chain-link-what {
+  color: var(--text);
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chain-link-source {
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chain-link-preview .chain-link-what {
+  color: var(--fam-bank);
+}
+
+.chain-link-id .chain-link-what {
+  color: var(--fam-intent);
+}
+
+/* The now strip names the model as the author of the quote it prints, through the same token. */
+.band-who-name {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: var(--who-page);
+}
+
+.band-agent .band-who-name {
+  color: var(--who-agent);
+}
+.band-model .band-who-name {
+  color: var(--who-model);
+}
+.band-server .band-who-name {
+  color: var(--who-server);
+}
+.band-engine .band-who-name {
+  color: var(--who-engine);
+}
+
+/* A context row is somebody's doing too: the same rail, in miniature. */
+.flow-context-who {
+  flex: 0 0 auto;
+  align-self: stretch;
+  width: 3px;
+  min-height: 12px;
+  border-radius: 2px;
+  background: var(--who-page);
+}
+
+.flow-context-who.band-agent {
+  background: var(--who-agent);
+}
+.flow-context-who.band-model {
+  background: var(--who-model);
+}
+.flow-context-who.band-server {
+  background: var(--who-server);
+}
+.flow-context-who.band-engine {
+  background: var(--who-engine);
+}
+
+/* ------------------------------------------------------------ the legend -- */
+
+.actor-legend {
+  align-items: center;
+  gap: 4px 10px;
+  flex-wrap: wrap;
+}
+
+.actor-legend-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+}
+
+.actor-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition:
+    opacity 120ms ease,
+    border-color 120ms ease;
+}
+
+.actor-chip:hover {
+  border-color: var(--border-strong);
+}
+
+.actor-chip-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--who-page);
+}
+
+.actor-chip-agent .actor-chip-swatch {
+  background: var(--who-agent);
+}
+.actor-chip-model .actor-chip-swatch {
+  background: var(--who-model);
+}
+.actor-chip-server .actor-chip-swatch {
+  background: var(--who-server);
+}
+.actor-chip-engine .actor-chip-swatch {
+  background: var(--who-engine);
+}
+
+.actor-chip.is-focused {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.actor-chip-agent.is-focused {
+  border-color: var(--who-agent);
+  background: color-mix(in srgb, var(--who-agent) 12%, var(--surface));
+}
+.actor-chip-model.is-focused {
+  border-color: var(--who-model);
+  background: color-mix(in srgb, var(--who-model) 12%, var(--surface));
+}
+.actor-chip-server.is-focused {
+  border-color: var(--who-server);
+  background: color-mix(in srgb, var(--who-server) 12%, var(--surface));
+}
+.actor-chip-engine.is-focused {
+  border-color: var(--who-engine);
+  background: color-mix(in srgb, var(--who-engine) 12%, var(--surface));
+}
+.actor-chip-page.is-focused {
+  border-color: var(--who-page);
+  background: color-mix(in srgb, var(--who-page) 12%, var(--surface));
+}
+
+.actor-chip.is-dimmed {
+  opacity: 0.5;
+}
+
+.actor-legend-note {
+  font-size: 11px;
+  color: var(--text-2);
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+
+/* One-line context rows between the blocks: the events that explain the story. */
+.flow-context {
+  display: grid;
+  grid-template-columns: 5.6rem 40px auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 26px;
+  padding: 2px 12px 2px 9px;
+  border: 0;
+  border-left: 3px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.flow-context:hover {
+  background: var(--surface-2);
+}
+
+.flow-context.is-selected {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+
+.flow-context-error {
+  border-left-color: color-mix(in srgb, var(--error) 70%, transparent);
+}
+.flow-context-warn,
+.flow-context-denied {
+  border-left-color: color-mix(in srgb, var(--warn) 60%, transparent);
+}
+
+.flow-context-time {
+  color: var(--text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.flow-context-label {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.flow-context-summary {
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.flow .boot-divider {
+  padding: 6px 12px 4px;
+}
+
+/* --------------------------------------------------------------- persona -- */
+/* Who is in this session and what they hold; the first thing in the left column. */
+
+.persona-card {
+  margin: 10px 0 12px;
+  padding: 10px 11px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  min-width: 0;
+}
+
+.persona-card.is-empty {
+  padding: 8px 11px;
+}
+
+.persona-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.persona-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.persona-name {
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.persona-id {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.persona-net {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 2px 0 4px;
+}
+
+.persona-net-value {
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ok);
+}
+
+.persona-net-value.is-negative,
+.persona-account-balance.is-negative {
+  color: var(--error);
+}
+
+.persona-net-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-3);
+}
+
+.persona-line {
+  margin: 0 0 3px;
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.persona-line .mono {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.persona-error {
+  color: var(--error);
+}
+
+.persona-accounts {
+  list-style: none;
+  margin: 6px 0;
+  padding: 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.persona-account {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.persona-account:last-child {
+  border-bottom: 0;
+}
+
+.persona-account.is-closed {
+  opacity: 0.6;
+}
+
+.persona-account-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.persona-account-type {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.persona-account-money {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.persona-account-limit {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.persona-grant {
+  margin: 6px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.45;
+}
+
+.persona-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 11px;
+}
+
+/* -------------------------------------------------------------- sessions -- */
+
+.panel-sessions {
+  padding: 0 10px 14px;
+}
+
+.login-group {
+  border-top: 1px solid var(--border);
+  padding-top: 9px;
+  margin-top: 9px;
+}
+
+.login-group:first-child {
+  border-top: 0;
+  margin-top: 0;
+}
+
+.login-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.login-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-3);
+}
+
+.login-id {
+  font-weight: 600;
+}
+
+.login-persona {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.login-note {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.4;
+}
+
+.grant-block {
+  margin-top: 9px;
+  padding-left: 9px;
+  border-left: 2px solid var(--border);
+}
+
+.grant-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.grant-id {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.grant-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 11.5px;
+  color: var(--text-3);
+  margin: 2px 0 6px;
+}
+
+.session-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+
+.session-row:hover {
+  border-color: var(--border-strong);
+}
+
+.session-row.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.session-row-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.session-xs {
+  font-weight: 650;
+}
+
+.session-row-meta,
+.session-row-stats,
+.session-row-times {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: 2px;
+  flex-wrap: wrap;
+}
+
+.session-row-stats span {
+  font-variant-numeric: tabular-nums;
+}
+
+.session-row-boot {
+  margin-top: 3px;
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.sessions-actions {
+  margin-top: 10px;
+}
+
+/* The Sessions header carries the two ways of making events go away. */
+.sessions-head {
+  flex-wrap: wrap;
+}
+
+.sessions-clear {
+  margin-left: auto;
+}
+
+.sessions-clear-buttons,
+.sessions-clear-confirm,
+.session-erase-confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.sessions-clear-question,
+.session-erase-question {
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--error);
+}
+
+.sessions-messages .callout {
+  margin: 8px 0 0;
+}
+
+/* The per-session control sits beside the row, never inside it: nested buttons are not valid HTML
+   and a delete that also selects the row would be a trap. */
+.session-row-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.session-row-wrap .session-row {
+  padding-right: 3.6rem;
+}
+
+.session-row-wrap > .btn-row-danger {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+}
+
+.session-erase-confirm {
+  margin: -2px 0 8px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--error) 45%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--error-soft);
+}
+
+/* ---------------------------------------------------------------- panels -- */
+
+.section {
+  padding-top: 14px;
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.section-note {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.sub-title {
+  margin: 16px 0 6px;
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-3);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.sub-note {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: var(--text-3);
+}
+
+.panel-footnote {
+  margin: 14px 0 0;
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.45;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+/* The tab bar is the visible heading of the detail column, so the panel's own <h3> is kept for
+   assistive technology only rather than printed twice. */
+.detail-body .section-title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.detail-body .section-head {
+  margin-bottom: 2px;
+}
+
+.detail-body .section {
+  padding-top: 10px;
+}
+
+.detail-tabs {
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+/* Six panel names do not fit one narrow column, and abbreviating them would cost the reader more
+   than a second row does. */
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 4px;
+  padding: 5px 10px 0;
+}
+
+.tab {
+  border: 0;
+  background: none;
+  padding: 6px 9px;
+  font-size: 12px;
+  color: var(--text-2);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab.is-active {
+  color: var(--accent-text);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.kv-list {
+  margin: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 10rem minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 2px 0;
+}
+
+.kv-wide {
+  grid-template-columns: 10rem minmax(0, 1fr);
+}
+
+.kv-key {
+  color: var(--text-3);
+  font-size: 11.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.kv-value {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.kv-redacted .kv-value {
+  color: var(--warn);
+}
+
+.args .kv-key {
+  color: var(--accent-text);
+}
+
+.scope-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.two-col {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+/* A block of text grows and lets the panel around it scroll. It must NOT become a scroller of its
+   own: `mount.js` only puts back the offset of an element carrying an `id`, so a nested scroller
+   without one is dragged down by the reader and snapped back to the top by the next repaint. The
+   only exception is `.jv-raw`, which has an id for exactly that reason. Every other block here is
+   bounded by the contract - 2 KB of text preview, a capped SQL string, a 400-character clip. */
+.code {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+/* The opt-in: a block may bound itself and scroll only if it carries an `id`, because that is
+   exactly what makes its offset survive the next repaint. `public/ui.js` codeBlock takes one. */
+.code[id] {
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.code-json {
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+/* --------------------------------------------------------- JSON viewer -- */
+/* A tree, not a wall. See public/json-view.js for why. `hidden` has to beat every display rule
+   below it, because the tree and the raw text are both in the DOM and only one is shown. */
+.jv [hidden],
+.jv[hidden] {
+  display: none !important;
+}
+
+.jv {
+  margin: 8px 0 0;
+  min-width: 0;
+}
+
+.jv-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-bottom: 2px;
+}
+
+.jv-title {
+  margin: 0;
+}
+
+.jv-shape {
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.jv-actions {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.jv-action {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.jv-action:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.jv-action.is-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.jv-action.is-copied {
+  border-color: var(--ok);
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.jv-action.is-blocked {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+/* Inline in an argument list: no toolbar, no box - it is a value in a cell, not a document. */
+.jv.is-compact {
+  margin: 0;
+}
+
+.jv.is-compact .jv-tree {
+  padding: 0;
+  background: none;
+  border: 0;
+}
+
+.jv-tree {
+  padding: 6px 8px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  min-width: 0;
+}
+
+/* One step of indentation, with a hairline so a deep value can be traced back to its parent. */
+.jv-children {
+  padding-left: 11px;
+  border-left: 1px solid var(--border);
+  margin-left: 4px;
+}
+
+.jv-root {
+  padding-left: 0;
+  border-left: 0;
+  margin-left: 0;
+}
+
+.jv-empty {
+  margin: 0;
+  font-size: 11.5px;
+  font-style: italic;
+}
+
+.jv-row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+
+.jv-toggle {
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.jv-toggle:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.jv-caret {
+  flex: 0 0 auto;
+  width: 0.75em;
+  color: var(--text-3);
+  font-size: 9px;
+}
+
+.jv-key {
+  flex: 0 0 auto;
+  color: var(--fam-catalog);
+  overflow-wrap: anywhere;
+}
+
+.jv-key::after {
+  content: ":";
+  color: var(--text-3);
+}
+
+/* An array index is a position, not a name; it reads as one. */
+.jv-index {
+  color: var(--text-3);
+}
+
+.jv-summary {
+  color: var(--text-3);
+  font-size: 10.5px;
+}
+
+.jv-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.jv-string .jv-text {
+  color: var(--fam-bank);
+  white-space: pre-wrap;
+}
+
+.jv-quote {
+  color: var(--text-3);
+}
+
+.jv-number {
+  color: var(--fam-sql);
+}
+
+.jv-boolean {
+  color: var(--fam-auth);
+}
+
+.jv-null {
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.jv-more,
+.jv-more-items {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-3);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.jv-more:hover,
+.jv-more-items:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.jv-more-items {
+  margin: 2px 0 0 16px;
+  display: inline-block;
+  width: auto;
+}
+
+/* Nothing extra: `.code[id]` below already makes this a scroller that keeps its place. */
+.jv-raw {
+  max-height: 60vh;
+}
+
+.meter {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  overflow: hidden;
+  width: 100%;
+}
+
+.meter-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 120ms linear;
+}
+
+.meter-ok {
+  background: var(--ok);
+}
+.meter-warn {
+  background: var(--warn);
+}
+.meter-error {
+  background: var(--error);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meter-fill {
+    transition: none;
+  }
+}
+
+.callout {
+  margin: 10px 0;
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.callout-warn {
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: var(--warn-soft);
+}
+
+.callout-error {
+  border-color: color-mix(in srgb, var(--error) 45%, transparent);
+  background: var(--error-soft);
+}
+
+.callout-title {
+  margin: 0 0 3px;
+  font-weight: 650;
+  font-size: 12.5px;
+}
+
+.callout-body {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.45;
+}
+
+.empty {
+  padding: 26px 16px;
+  text-align: center;
+  color: var(--text-3);
+}
+
+.empty-title {
+  margin: 0 0 5px;
+  font-weight: 650;
+  color: var(--text-2);
+}
+
+.empty-body {
+  margin: 0 auto 10px;
+  max-width: 34rem;
+  line-height: 1.5;
+  font-size: 12.5px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+
+.table th {
+  text-align: left;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  font-weight: 600;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  position: sticky;
+  top: 0;
+}
+
+.table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.table tr:last-child td {
+  border-bottom: 0;
+}
+
+.tool-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.tool-item {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid transparent;
+}
+
+.tool-item:last-child {
+  border-bottom: 0;
+}
+
+.tool-item.is-unavailable {
+  background: var(--warn-soft);
+  border-left-color: var(--warn);
+}
+
+.tool-item.is-hidden {
+  opacity: 0.65;
+  border-left-style: dashed;
+  border-left-color: var(--text-3);
+}
+
+.tool-item-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+/* The badges wrap under the name rather than pushing the row wider than the panel. */
+.tool-item-badges {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.tool-item-toggle {
+  flex: 1 1 14rem;
+}
+
+.tool-item-label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tool-name {
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.tool-item-title {
+  display: block;
+  margin: 1px 0 0;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.tool-item.is-open:not(.is-unavailable) {
+  background: var(--surface-2);
+}
+
+/* The listing the rows came from; the hash note says what `content_hash` does not cover. */
+.listing-head {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.listing-hash-note {
+  color: var(--text-3);
+}
+
+/* Worked out by this page from `resolved_from`, so it wears the dashed page rail. */
+.listing-resolved {
+  margin: 0 0 8px;
+  padding-left: 8px;
+  border-left: 2px dashed color-mix(in srgb, var(--who) 55%, transparent);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+.tool-card {
+  display: grid;
+  gap: 10px;
+  margin: 8px 0 4px 18px;
+  min-width: 0;
+}
+
+.tool-card-block {
+  min-width: 0;
+}
+
+.tool-card-label {
+  margin: 0 0 4px;
+}
+
+.tool-card-source {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-3);
+}
+
+/* Verbatim and whole: never clipped, the panel scrolls instead. */
+.tool-card-description {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-card-degrade {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.tool-card-calls {
+  margin: 4px 0 0;
+  padding-left: 8px;
+  border-left: 2px dashed color-mix(in srgb, var(--who) 55%, transparent);
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.param-table td {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* A JSON Schema type is one token ("string", "array of string"): breaking it mid-word read as "stri / ng". */
+.param-type {
+  white-space: nowrap;
+}
+
+.param-name {
+  font-weight: 600;
+}
+
+.param-row.is-nested .param-name {
+  padding-left: 20px;
+}
+
+.param-alt {
+  display: block;
+  font-family: inherit;
+  font-weight: 400;
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.param-description,
+.param-constraints {
+  margin: 0;
+}
+
+.param-constraints {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+/* The one question every call asks the model (ADR-8): its row wears the model colour. */
+.param-row.is-rationale td {
+  background: color-mix(in srgb, var(--who) 8%, transparent);
+}
+
+.param-row.is-rationale td:first-child {
+  box-shadow: inset 3px 0 0 var(--who);
+}
+
+.param-row.is-rationale .param-name {
+  color: var(--who);
+}
+
+.param-answer td {
+  padding-top: 2px;
+}
+
+.param-answer-note {
+  margin: 0;
+  padding-left: 8px;
+  border-left: 2px dashed color-mix(in srgb, var(--who) 55%, transparent);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+.flag-list {
+  overflow-wrap: anywhere;
+}
+
+.flag-value {
+  color: var(--text-2);
+}
+
+.tool-card-digest {
+  overflow-wrap: anywhere;
+}
+
+/* The whole verdict sentence wraps like prose; the short form in a closed row stays one pill. */
+.schema-check-full {
+  display: inline;
+  white-space: normal;
+  line-height: 1.6;
+}
+
+.tool-card-raw {
+  min-width: 0;
+}
+
+.tool-item-scopes {
+  color: var(--text-3);
+}
+
+.tool-item-reason {
+  margin: 5px 0 0;
+  font-size: 11.5px;
+  color: var(--warn);
+}
+
+.missing-scopes {
+  color: var(--warn);
+}
+
+.catalog-meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: var(--text-3);
+  margin-bottom: 8px;
+}
+
+/* ------------------------------------------------------- call inspector -- */
+
+.call-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 6px 0 10px;
+}
+
+.call-tool {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.timing {
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.timing-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.timing-value {
+  font-size: 17px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.timing-budget {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.timing-share {
+  margin-left: auto;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.call-section {
+  margin-top: 6px;
+}
+
+.rationale {
+  margin: 0;
+  padding: 9px 12px;
+  border-left: 3px solid var(--fam-intent);
+  background: var(--surface-2);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.rationale-source {
+  margin-top: 5px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.children {
+  display: grid;
+  gap: 5px;
+}
+
+.child {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  padding: 5px 8px;
+}
+
+.child.is-selected {
+  border-color: var(--accent);
+}
+
+.child-head {
+  display: grid;
+  grid-template-columns: 40px 5.4rem auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+}
+
+.child-time {
+  font-size: 11px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.child-label {
+  font-weight: 600;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.child-summary {
+  color: var(--text-2);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.child-note {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.event-summary {
+  margin: 0 0 10px;
+  color: var(--text-2);
+}
+
+/* ------------------------------------------------------------ sql panel -- */
+
+.query-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.query {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--fam-sql);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  background: var(--surface-2);
+}
+
+.query.is-rejected {
+  border-left-color: var(--error);
+}
+
+.query-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.query-time,
+.query-duration {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.query-error {
+  margin: 6px 0 0;
+  color: var(--error);
+  font-size: 12px;
+}
+
+.limit-line {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin: 5px 0;
+  font-size: 12px;
+}
+
+.scratch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.scratch-item {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid var(--fam-etl);
+}
+
+.scratch-item:last-child {
+  border-bottom: 0;
+}
+
+.scratch-item.is-cleared,
+.scratch-item.is-evicted {
+  border-left-color: var(--border-strong);
+}
+
+.scratch-item.is-lost {
+  border-left-color: var(--error);
+  background: var(--error-soft);
+}
+
+.scratch-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scratch-name {
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.scratch-badge {
+  margin-left: auto;
+  flex: none;
+}
+
+.scratch-meta {
+  margin: 2px 0 0;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.scratch-columns {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.scratch-note {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  color: var(--warn);
+}
+
+/* --------------------------------------------------------- intent panel -- */
+
+.intent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 9px;
+}
+
+.intent-item {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.intent-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  border: 0;
+  background: none;
+  padding: 0 0 5px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+.intent-time {
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.intent-tool {
+  font-weight: 600;
+}
+
+.inferred {
+  margin-top: 12px;
+  padding: 9px 11px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
+.inferred-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.inferred-head .sub-title {
+  margin: 0;
+}
+
+.inferred-value {
+  margin: 4px 0;
+  font-size: 15px;
+  font-weight: 600;
+  text-transform: capitalize;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.inferred-confidence {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-3);
+  text-transform: none;
+}
+
+/* --------------------------------------------------------- health panel -- */
+
+.stream-facts {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.latency-table td,
+.fail-table td,
+.auth-table td {
+  font-variant-numeric: tabular-nums;
+}
+
+.fail-row.fail-error td:first-child {
+  color: var(--error);
+}
+
+/* ------------------------------------------------------------ gate/pair -- */
+
+.gate {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 28px 18px;
+  background:
+    radial-gradient(1100px 500px at 50% -12%, var(--accent-soft), transparent 65%),
+    var(--bg);
+}
+
+.connect-card {
+  width: min(46rem, 100%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 30px 32px 26px;
+}
+
+.connect-eyebrow {
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  color: var(--accent-text);
+  font-weight: 650;
+}
+
+.connect-title {
+  margin: 7px 0 10px;
+  font-size: 28px;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.connect-lead {
+  margin: 0 0 20px;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--text-2);
+  max-width: 40rem;
+}
+
+.connect-sub {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-3);
+}
+
+.connect-steps {
+  margin: 0 0 18px;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.connect-steps code {
+  font-family: var(--mono);
+  background: var(--surface-3);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.pair-form {
+  display: grid;
+  gap: 10px;
+  max-width: 26rem;
+}
+
+.pair-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.pair-error {
+  margin: 0;
+  color: var(--error);
+  font-size: 12.5px;
+}
+
+.connect-note {
+  margin: 16px 0 0;
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.5;
+  max-width: 38rem;
+}
+
+.connect-admin {
+  margin: 18px 0 0;
+}
+
+.admin-form {
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+/* ---------------------------------------------------------------- footer -- */
+
+.footer {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 7px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-3);
+  font-size: 11.5px;
+}
+
+.footer-keys {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ phone width -- */
+/* Last in the file on purpose: these rules override the desktop blocks above, which share their
+   specificity. */
+/* Phone width. Nothing is dropped that carries information: the latency bar becomes its own
+   number, and the keyboard hints go, because there is no keyboard. */
+@media (max-width: 620px) {
+  .layout {
+    padding: 0 8px 8px;
+  }
+
+  .header-inner {
+    gap: 10px;
+    padding: 8px 10px;
+  }
+
+  .header-stats {
+    gap: 12px;
+    order: 3;
+  }
+
+  .header-right {
+    margin-left: 0;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .fixture-controls {
+    flex-wrap: wrap;
+    order: 4;
+    width: 100%;
+  }
+
+  /* Two lines per row: the label above its summary, and no latency column - every summary that
+     has a duration already prints it. */
+  .row {
+    grid-template-columns: 4.4rem 34px minmax(0, 1fr) auto;
+    gap: 7px;
+    padding: 5px 9px;
+    align-items: start;
+  }
+
+  .row-latency,
+  .row-latency-empty {
+    display: none;
+  }
+
+  .row-body {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+  }
+
+  .row-summary {
+    white-space: normal;
+  }
+
+  .row-time {
+    padding-top: 1px;
+  }
+
+  .now-strip,
+  .now-strip.is-idle {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "lead" "bar" "numbers" "meta";
+    margin: 8px 8px 10px;
+  }
+
+  .now-numbers {
+    justify-content: flex-start;
+  }
+
+  .kv,
+  .kv-wide {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .child-head {
+    grid-template-columns: 34px 4.6rem minmax(0, 1fr);
+  }
+
+  .child-summary {
+    grid-column: 1 / -1;
+  }
+
+  .flow-context {
+    grid-template-columns: 4.4rem 34px minmax(0, 1fr) auto;
+    padding: 4px 9px;
+  }
+
+  .flow-context-summary {
+    grid-column: 1 / -1;
+    white-space: normal;
+  }
+
+  /* The row breaks into three lines rather than pushing the page sideways: what it is, what went
+     in, what came back. The digest keeps its arrow, so in and out never blur into one another. */
+  .call-line {
+    gap: 2px 7px;
+  }
+
+  .call-digest {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+  }
+
+  .call-in,
+  .call-out {
+    flex: 1 1 100%;
+  }
+
+  .call-arrow {
+    display: none;
+  }
+
+  .call-out::before {
+    content: "\2192";
+    color: var(--text-3);
+  }
+
+  .call-open {
+    padding: 8px 8px 10px;
+    gap: 8px;
+  }
+
+  .wire-row {
+    grid-template-columns: 3px minmax(0, 1fr);
+    row-gap: 0;
+  }
+
+  .wire-row > .wire-value {
+    grid-column: 2;
+  }
+
+  .card-side {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .card-side-label {
+    text-align: left;
+  }
+
+  .timeline-modes {
+    order: 3;
+  }
+
+  .toolbar-line {
+    flex-wrap: wrap;
+  }
+
+  .connect-card {
+    padding: 22px 18px 20px;
+  }
+
+  .connect-title {
+    font-size: 23px;
+  }
+
+  .footer-keys {
+    display: none;
+  }
+}

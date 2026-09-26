@@ -1,0 +1,45 @@
+# Observations: what claude.ai, Claude Code and MCP Inspector actually sent
+
+Facts only, with dates. Interpretation goes to `docs/ASSUMPTIONS.md` and `docs/contracts/CHANGES.md`. Nothing is deployed: every observation below was made against `node dist/server.js` on the developer's Mac, port 8080, `ORIGIN_POLICY=log-only`. Local clients reached it on loopback. Codex reached it on 2026-09-09 through a cloudflared quick tunnel - the first non-local client, and not a deployment.
+
+## What every `/mcp` request records
+
+Two traces per request, both produced by `src/mcp/index.ts`; the schemas live in `src/contracts/events.ts`, the helpers (`eraOf`, `emitWithId`, `withCorrelation`) in `src/mcp/xray.ts`.
+
+| Trace | Fields |
+|---|---|
+| `http.request` event (`HttpRequestData`) | `method`, `path`, `status`, `duration_ms`, `user_agent`, `remote_ip_prefix` (`/24` for IPv4, `/48` for IPv6, invariant 11), `anthropic_egress` (inside `160.79.104.0/21`), `origin`, `origin_decision` (`allowed` / `absent` / `rejected` / `logged`), `mcp_protocol_version_header`, `mcp_session_id` (recorded if a client sends one; never issued), `has_authorization`, `content_type`, `sse`, `rate_limited` |
+| `session.initialized` event (`SessionInitializedData`) | `protocol_version_requested`, `protocol_version_negotiated`, `client` (`clientInfo` verbatim: `name`, `version`, `title`), `client_capabilities`, `server_capabilities`, `instructions_sent`, `initialize_count` |
+| One structured stdout line, `"event":"http.request"` | the `http.request` fields plus `base_url`, `host`, `origin_policy`, `rpc_methods`, `rpc_tools`, `initialize_protocol_version`, `client_info`, `client_capabilities`, `grant_id`, `xs`. This is how the table below is filled from a log with no dashboard attached (`gcloud run services logs read mcp-bank` once deployed) |
+
+Signals to watch: a header or negotiated version at or above `2026-07-28` flips `era` to `modern` (SDK 1.30.0 negotiates at most `2025-11-25`, so every session so far is `legacy`, ADR-2); `initialize_count` rising on one `xs` is a reconnect loop (A-27), while a new `xs` per reconnect means `XS_IDLE_GAP_MINUTES` is too low. The SDK negotiates `SUPPORTED_PROTOCOL_VERSIONS.includes(requested) ? requested : LATEST_PROTOCOL_VERSION`: an unsupported version is negotiated down to `2025-11-25`, never refused.
+
+## Per client
+
+| Client | Version | Date | Protocol version | `clientInfo` | Capabilities | `Origin` | DCR shape | Notes |
+|---|---|---|---|---|---|---|---|---|
+| curl | - | 2026-09-08 | as sent | as sent | as sent | as sent: absent -> `absent`; `https://claude.ai` and the server's own origin -> `allowed`; `https://evil.example` -> `logged` (`rejected` under `allowlist`) | - | `StreamableHTTPServerTransport` answers 406 unless `Accept` carries both `application/json` and `text/event-stream`. `POST /mcp` without a bearer is 401 in about 1 ms |
+| SDK 1.30.0 `Client` over `StreamableHTTPClientTransport` (`test/e2e/*.mjs`) | client `0.1.0` | 2026-09-08 | `2025-11-25`; `MCP-Protocol-Version` absent on `initialize`, `2025-11-25` after | `{"name":"glass-bank-e2e","version":"0.1.0"}`; `glass-bank-session-walk` and `glass-bank-session-walk-write` in the session walk | `{}` | not recorded | `client_name` `Glass Bank e2e walk` / `Glass Bank session walk`, `redirect_uris` `["http://127.0.0.1:60123/callback"]` / `60124`, `token_endpoint_auth_method` `none`, `application_type` `web` | Exercises the step-up: `create_transfer` under a read-only grant -> `403` + `WWW-Authenticate: Bearer error="insufficient_scope", scope="cards:write transfers:write", resource_metadata=...`. A `tools/call` with no `rationale` reaches the handler |
+| MCP Inspector CLI | 2.5.0 | 2026-09-08 | `2025-11-25`; header absent on `initialize`, `2025-11-25` after | `{"name":"inspector-cli","version":"2.5.0"}` | `{}` on one run; `{"roots":{"listChanged":true},"extensions":{"io.modelcontextprotocol/tasks":{},"io.modelcontextprotocol/ui":{"mimeTypes":["text/html;profile=mcp-app"]}}}` on another - invocation-dependent; the server advertises neither extension and the client proceeded | absent | `{"client_name":"MCP Inspector","redirect_uris":["http://127.0.0.1:6276/oauth/callback"],"token_endpoint_auth_method":"none","application_type":"native"}` | `User-Agent: node`, loopback. Probes `/.well-known/oauth-protected-resource/mcp` first (never the bare path), then `/.well-known/oauth-authorization-server` only. Opens `GET /mcp` on every connection and tolerates the 405. One `tools/list` per connection, no reconnect loop. Reconnected with a token stored from a previous server process, no OAuth (A-11). Its `/oauth/callback` is the development-only loopback of A-13, refused under `NODE_ENV=production`. `--strict` passes all 17 schemas, including `create_transfer`'s `oneOf`. The browser leg needs a TTY or `MCP_AUTO_OPEN_ENABLED=true` |
+| Codex (OpenAI) | `codex-mcp-client/0.153.4` | 2026-09-09 | requests `2025-06-18`; first sends `GET /mcp` with `MCP-Protocol-Version: 2024-11-05` (405) | title `Codex` | `elicitation: {form, url}`; later connections also `extensions: io.modelcontextprotocol/ui, openai/form` | absent | `{client_name:"Codex", redirect_uris:["http://127.0.0.1:<random port>/callback"], token_endpoint_auth_method:"none", application_type:"native"}`, one fresh registration per connection | First non-local client, through the cloudflared tunnel, not a deployment. Sequence: `GET /mcp` (405) -> unauthenticated `POST /mcp` (401) -> OAuth -> `initialize` twice per connection -> `tools/list` and `resources/list`. No `Mcp-Session-Id`. Requested every scope, including `cards:write`, `transfers:write` and `xray:read`. Chose the shared persona `per_ava_stone`. `rationale` values in the user's language (Portuguese). Ran `get_current_user`, `load_accounts`, `get_tool_availability`, `process_data`, `execute_query`, `clear_table` successfully. Remote address IPv6, recorded as a `/48` prefix |
+
+## Still unobserved
+
+- claude.ai (web, Desktop, mobile): no connector has ever been created; nothing is deployed and D-9 (which account runs the first live test) is open.
+- Claude Code.
+- ChatGPT: the owner reports (by 2026-09-15) that it connected through the cloudflared tunnel, but its `clientInfo`, headers, `Origin` and DCR body were not recorded. Capture them on its next connection.
+- Any request from Anthropic's egress range `160.79.104.0/21`: `anthropic_egress` has never been `true`.
+- Any `Origin` header from a browser-based client. Every recorded client sent none, so `log-only` and `allowlist` have been indistinguishable.
+- A-40 (does Claude act on the 403 step-up), A-41 (does the step-up popup carry the `login_id` cookie), A-05 / A-06 (`rationale` quality from Claude), A-17 (Origin values), and the `tools/list` cadence ("every 25 to 80 s" is Anthropic's documentation, not a measurement here).
+- Cloud Run itself: cold-start and TLS cost against the 10 s discovery budget, both `run.app` hostnames, and the proxy hop count behind `app.set('trust proxy', 1)` (only the cloudflared shape has been seen).
+
+## Decisions taken from these observations
+
+| Observation | Decision |
+|---|---|
+| `@modelcontextprotocol/server` 2.0.0 advertises the same five protocol versions as 1.30.0 (`2025-11-25` down to `2024-10-07`), ships no Node `IncomingMessage` transport, and moved the OAuth helpers into the deprecated `server-legacy` package | Stay on `@modelcontextprotocol/sdk` 1.30.0 (ADR-2); revisit when an SDK advertises `2026-07-28` |
+| No `Origin` from any Claude client yet | `ORIGIN_POLICY=log-only` until claude.ai's values are recorded here; then `allowlist` (invariant 10) |
+| Inspector and Codex both open `GET /mcp`, tolerate the 405 and send no `Mcp-Session-Id` | Stateless transport stands: no `Mcp-Session-Id`, GET and DELETE answer 405 (ADR-3, invariant 6) |
+| Codex calls `resources/list` after `tools/list` | Empty `prompts` and `resources` capabilities are declared and both lists answer empty, recorded as `catalog.prompts_listed` / `catalog.resources_listed` |
+| Inspector reconnected with a token minted by a previous process | A-11 confirmed: verification is stateless and a restart revokes nothing; the consumed-code and revoked-refresh sets are the only per-process state |
+| Inspector and Codex register `application_type: "native"` with a loopback redirect | Any `application_type` is accepted; a loopback `/callback` always, the Inspector's `/oauth/callback` outside production only (A-13, `isAllowedRedirectUri` in `src/contracts/auth.ts`); whether the Inspector should work against the deployed service is undecided |

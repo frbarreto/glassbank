@@ -1,0 +1,43 @@
+# Glass Bank on a Compute Engine VM - option B: Let's Encrypt IP-address certificate
+# (block: infra, task T0.4).
+#
+# Let's Encrypt issues certificates for bare IP addresses through the `shortlived` ACME profile
+# (generally available since 2026-01-15; ~6-day lifetime, so renewal must never be broken).
+# Caddy >= 2.11.3 is reported to work with it. This removes the nip.io dependency entirely, at the
+# cost of a newer, less-travelled path and a certificate that renews every few days.
+#
+#   PUBLIC_IP=34.30.1.2 ACME_EMAIL=you@example.com CADDYFILE=./Caddyfile.ip-cert docker compose up -d
+#
+# PUBLIC_BASE_URL on the app container must then be exactly https://$PUBLIC_IP.
+#
+# UNVERIFIED: this file has been syntax-checked with `caddy validate`, but no certificate has been
+# issued from it in this task (issuing one needs the VM, the static IP and open ports 80/443).
+{
+	email {$ACME_EMAIL}
+}
+
+https://{$PUBLIC_IP} {
+	encode zstd gzip
+
+	log {
+		output stdout
+		format console
+	}
+
+	tls {
+		issuer acme {
+			# The short-lived profile is the one that permits IP-address identifiers.
+			profile shortlived
+		}
+	}
+
+	reverse_proxy mcp-bank:8080 {
+		# SSE: never buffer (CLAUDE.md invariant 3).
+		flush_interval -1
+		transport http {
+			versions 1.1
+			dial_timeout 10s
+		}
+		# Caddy sets X-Forwarded-For / -Proto / -Host by default; Express `trust proxy` reads them.
+	}
+}

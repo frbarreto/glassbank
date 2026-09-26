@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.DS_Store
+coverage/
+
+# Local OAuth token written by scripts/local-login.mjs (fake bank, local only)
+.glass-bank-token.json

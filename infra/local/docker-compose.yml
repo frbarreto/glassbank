@@ -1,0 +1,138 @@
+# Glass Bank - the production image, on this laptop (block: infra).
+#
+# Decision D-2 is local-first: the same container that Cloud Run runs must run here and be proven
+# here before any deploy. This file builds infra/Dockerfile and gives the container the same
+# environment Cloud Run gives it (docs/DEPLOYMENT.md sections 1.2 and 3), with three deliberate
+# differences, each marked LOCAL below:
+#
+#   1. the secrets come from the shell or the defaults here instead of Secret Manager
+#   2. PUBLIC_BASE_URL / PUBLIC_HOSTS point at localhost (or a cloudflared tunnel host)
+#   3. the SQLite files live on a named volume instead of Cloud Run's memory-backed /tmp, so they
+#      survive `docker compose restart` and can be inspected
+#
+# Usage (from the repository root):
+#   docker compose -f infra/local/docker-compose.yml up --build
+#   curl -s localhost:8080/healthz
+#   infra/smoke.sh http://localhost:8080
+#   docker compose -f infra/local/docker-compose.yml down          # keeps the volume
+#   docker compose -f infra/local/docker-compose.yml down -v       # drops the SQLite files too
+#
+# To expose this to a real claude.ai account, read infra/local/cloudflared.md and re-run with
+#   PUBLIC_BASE_URL=https://<tunnel>.trycloudflare.com PUBLIC_HOSTS=<tunnel>.trycloudflare.com
+
+name: glass-bank-local
+
+services:
+  # The image runs as the unprivileged `node` user (uid 1000) and a fresh named volume is created
+  # root-owned, so nothing in the app could write to it. This one-shot container fixes the
+  # ownership before the app starts. It uses the same base image, so it pulls nothing extra.
+  data-init:
+    image: node:22-slim
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /data && chown -R 1000:1000 /data"]
+    volumes:
+      - mcp-bank-data:/data
+    restart: "no"
+
+  mcp-bank:
+    build:
+      context: ../..
+      dockerfile: infra/Dockerfile
+    image: glass-bank:local
+    container_name: glass-bank
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+    ports:
+      - "${HOST_PORT:-8080}:8080"
+    # CLAUDE.md invariant 12: the SIGTERM handler must finish in under 10 s. 15 s of grace makes a
+    # violation visible as a SIGKILL in the logs instead of hiding it.
+    stop_grace_period: 15s
+    init: true
+    restart: unless-stopped
+    volumes:
+      - mcp-bank-data:/data
+    environment:
+      # --- Runtime -------------------------------------------------------------------------
+      NODE_ENV: production
+      PORT: "8080"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+
+      # --- Public identity (CLAUDE.md invariant 4) -----------------------------------------
+      # LOCAL: localhost by default. Point both at the cloudflared host to test from claude.ai;
+      # the PRM `resource` is derived from these, and Claude rejects a mismatch.
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-http://localhost:8080}"
+      PUBLIC_HOSTS: "${PUBLIC_HOSTS:-localhost:8080}"
+      # Current default (A-17); production switches to allowlist once claude.ai Origins are known.
+      ORIGIN_POLICY: "${ORIGIN_POLICY:-log-only}"
+      # Decision D-3: write tools are on by default. ';' separated, as in the cloud.
+      FEATURE_FLAGS: "${FEATURE_FLAGS:-writes;transfers}"
+
+      # --- Secrets -------------------------------------------------------------------------
+      # LOCAL: Cloud Run injects these from Secret Manager through --set-secrets. The defaults
+      # below are development values, are not secret, and are refused nowhere except production
+      # Cloud Run (the config layer only rejects the exact .env.example placeholder). Override
+      # them from your shell for anything you would not paste into a chat:
+      #   OAUTH_SIGNING_KEY=$(openssl rand -base64 48) docker compose -f infra/local/... up
+      OAUTH_SIGNING_KEY: "${OAUTH_SIGNING_KEY:-local-container-development-key-not-a-secret-0000}"
+      XRAY_ADMIN_TOKEN: "${XRAY_ADMIN_TOKEN:-local-container-development-admin-token}"
+
+      # --- X-ray event log -----------------------------------------------------------------
+      # LOCAL: /data (named volume) instead of Cloud Run's memory-backed /tmp.
+      XRAY_DB_PATH: "${XRAY_DB_PATH:-/data/xray.sqlite}"
+      XRAY_RETENTION_HOURS: "${XRAY_RETENTION_HOURS:-72}"
+      XS_IDLE_GAP_MINUTES: "${XS_IDLE_GAP_MINUTES:-15}"
+
+      # --- Auth storage --------------------------------------------------------------------
+      AUTH_DB_PATH: "${AUTH_DB_PATH:-/data/auth.sqlite}"
+      MAX_DCR_CLIENTS: "${MAX_DCR_CLIENTS:-1000}"
+      CIMD_ENABLED: "${CIMD_ENABLED:-false}"
+
+      # --- ETL / scratch SQL guard (caps, docs/DEPLOYMENT.md section 3) ---------------------
+      MAX_TABLES_PER_GRANT: "${MAX_TABLES_PER_GRANT:-10}"
+      MAX_SCRATCH_DBS: "${MAX_SCRATCH_DBS:-200}"
+      MAX_QUERY_ROWS: "${MAX_QUERY_ROWS:-100}"
+      TABLE_TTL_MINUTES: "${TABLE_TTL_MINUTES:-30}"
+      QUERY_TIMEOUT_MS: "${QUERY_TIMEOUT_MS:-2000}"
+      MAX_CONCURRENT_ETL_OPS: "${MAX_CONCURRENT_ETL_OPS:-2}"
+      ETL_WORKER_POOL_SIZE: "${ETL_WORKER_POOL_SIZE:-4}"
+
+      # --- Bank core caps ------------------------------------------------------------------
+      MAX_MATERIALISED_PERSONAS: "${MAX_MATERIALISED_PERSONAS:-200}"
+      MAX_PERSONA_OVERLAYS: "${MAX_PERSONA_OVERLAYS:-1000}"
+      PERSONA_OVERLAY_TTL_HOURS: "${PERSONA_OVERLAY_TTL_HOURS:-24}"
+
+      # --- Rate limits (ADR-16, A-43) ------------------------------------------------------
+      RATE_LIMIT_IP_REGISTER: "${RATE_LIMIT_IP_REGISTER:-60}"
+      RATE_LIMIT_IP_AUTHORIZE: "${RATE_LIMIT_IP_AUTHORIZE:-300}"
+      RATE_LIMIT_IP_CONSENT: "${RATE_LIMIT_IP_CONSENT:-60}"
+      RATE_LIMIT_IP_PAIR_FAILURES: "${RATE_LIMIT_IP_PAIR_FAILURES:-5}"
+      RATE_LIMIT_CLIENT_TOKEN: "${RATE_LIMIT_CLIENT_TOKEN:-120}"
+      RATE_LIMIT_GRANT_TOOL_CALLS: "${RATE_LIMIT_GRANT_TOOL_CALLS:-120}"
+      RATE_LIMIT_LOGIN_GRANTS: "${RATE_LIMIT_LOGIN_GRANTS:-20}"
+
+      # --- Optional (backlog) --------------------------------------------------------------
+      SNAPSHOT_BUCKET: "${SNAPSHOT_BUCKET:-}"
+
+    # node:22-slim carries no curl or wget, so the health check uses the runtime that is always
+    # there. Matches Cloud Run's own startup probe on /healthz.
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+    # Mirrors the Cloud Run shape (1 vCPU / 1 GiB) so memory pressure shows up here first.
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+
+volumes:
+  mcp-bank-data:

@@ -1,0 +1,30 @@
+# Cloud Build config for Glass Bank (block: infra).
+#
+# `gcloud builds submit --tag` only finds a Dockerfile at the context root, and the Dockerfile
+# belongs to the infra block, so the build is driven by this file instead:
+#
+#   gcloud builds submit --region=us-central1 --config infra/cloudbuild.yaml \
+#     --substitutions="_IMAGE=us-central1-docker.pkg.dev/lake-fraude/lake-fraude/mcp-bank:<git-sha>" .
+#
+# Image tags are git SHAs (CLAUDE.md invariant 12). infra/deploy.sh is the only place gcloud run
+# flags live; this file never deploys.
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - infra/Dockerfile
+      - -t
+      - $_IMAGE
+      - .
+
+images:
+  - $_IMAGE
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+
+timeout: 1200s

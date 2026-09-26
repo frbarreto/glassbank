@@ -1,0 +1,20 @@
+node_modules
+dist
+coverage
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.DS_Store
+docs
+test
+# ...except the recorded sessions the dashboard serves at /xray/?fixture=1.
+!test/fixtures
+scripts
+infra/vm
+infra/local
+*.md

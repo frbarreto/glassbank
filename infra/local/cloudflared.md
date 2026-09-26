@@ -69,9 +69,9 @@ curl -s -i -X POST https://<tunnel>.trycloudflare.com/mcp -H 'content-type: appl
 ```
 
 `bash infra/smoke.sh https://<tunnel>.trycloudflare.com` runs the whole checklist and the DNS check
-runs for real. The Cloud Run checks (the `run.app` URL, `gcloud run services describe`, the IAM
-policy) fail until the service is deployed: 24 passed / 5 failed on 2026-09-14, all five of them
-Cloud Run, none the tunnel.
+runs for real. Checks 6 and 7 describe the Cloud Run service (`gcloud run services describe`, the
+IAM policy), not the tunnel: they pass while the service is up and fail while it is paused
+(`make pause`), and neither outcome says anything about the tunnel.
 
 ## 5. Add it in the client
 

@@ -12,7 +12,7 @@ run against the built artefact (`node dist/server.js`). If 8080 is taken, use an
 
 | Command | Expected |
 |---|---|
-| `npm run check` | tsc clean, eslint clean, 1295 tests in 60 files (includes `public/__tests__`) |
+| `npm run check` | tsc clean, eslint clean, 1296 tests in 60 files (includes `public/__tests__`) |
 | `npm run build` | `tsc -p tsconfig.build.json` writes `dist/server.js`, what the container runs |
 | `npm run e2e` | `e2e:oauth` 55 checks (port 8899) + `e2e:session` 96 checks (port 8897) = 151; each spawns its own `tsx src/server.ts` with private SQLite files |
 | `npm run e2e:dashboard` | 28 checks (port 8095, boots `dist/server.js`, so build first): the whole OAuth walk, nine tool calls including a write, then headless Chrome paired to that session asserting the chain (one line per call, a call opening into REQUEST / INSIDE / RESPONSE, every party named), the persona card and the erase. Needs Chrome; `SHOTS=<dir>` also writes screenshots |
@@ -34,6 +34,7 @@ development default (production refuses the default `OAUTH_SIGNING_KEY`). The fi
 ## 4. Look at it from outside
 
 ```bash
+curl -s http://localhost:8080/ | grep -c '/mcp'   # the landing page names the MCP URL
 curl -s http://localhost:8080/health
 # {"status":"ok","boot_id":"boot_b710a378-...","version":"0.1.0","origin_policy":"log-only","uptime_s":21}
 curl -s -i -X POST http://localhost:8080/mcp -H 'content-type: application/json' \

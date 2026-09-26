@@ -1,10 +1,10 @@
 # infra
 
-Status: **deployed** on 2026-09-26 by `.github/workflows/pipeline.yml` (first run: check, e2e, image and deploy green; the live smoke exposed the `/healthz` interception and the check-6 parser bug, both fixed in the same change). `bootstrap.sh` and `ci-bootstrap.sh` ran for real; `make deploy` (Cloud Build) has never run. `domain.sh` ran on 2026-09-26: `glassbank-mcp.abovethefog.app` is mapped, certified and the canonical `PUBLIC_BASE_URL`; the dispatched redeploy passed 36 smoke checks on both hostnames (`docs/DEPLOYMENT.md` section 16). `observe.sh` ran the same day (section 17).
+Status: **deployed** on 2026-09-26 by `.github/workflows/pipeline.yml` (first run: check, e2e, image and deploy green; the live smoke exposed the `/healthz` interception and the check-6 parser bug, both fixed in the same change). `bootstrap.sh` and `ci-bootstrap.sh` ran for real; `make deploy` (Cloud Build) has never run. `domain.sh` ran on 2026-09-26: `glassbank-mcp.abovethefog.app` is mapped, certified and the canonical `PUBLIC_BASE_URL`; the dispatched redeploy passed 36 smoke checks on both hostnames (`docs/DEPLOYMENT.md` section 16). `observe.sh` ran the same day (section 17). Between demos the service is deleted (`make pause`) and recreated from the newest image (`make resume`, about 45 s); the pipeline skips push deploys while it is absent.
 
 ## Purpose
 Build, run, deploy and verify the one container: locally first (`docker compose`, cloudflared), then the Cloud Run service `mcp-bank` in `lake-fraude` / `us-central1` (D-2).
-The gcloud flags live in `deploy.sh` and nowhere else.
+The `gcloud run deploy` flags live in `deploy.sh` and nowhere else; the other scripts hold one-time or operational gcloud commands, each honouring `DRY_RUN=1`.
 
 ## Files
 | File | What it does |
@@ -30,21 +30,26 @@ The gcloud flags live in `deploy.sh` and nowhere else.
 
 ## Public interface (scripts and their env inputs)
 - `infra/bootstrap.sh`: `PROJECT_ID` (lake-fraude), `REGION` (us-central1), `SERVICE` (mcp-bank), `EXPECT_ACCOUNT`, `ENABLE_SNAPSHOT_BUCKET=1`, `DRY_RUN=1`. No `make` target.
-- `infra/deploy.sh` (`make deploy`): `PROJECT_ID`, `PROJECT_NUMBER` (520283334162), `REGION`, `SERVICE`, `AR_REPO`, `RUNTIME_SA`, `IMAGE_TAG`, `SKIP_BUILD=1`, `PUBLIC_BASE_URL`, `PUBLIC_HOSTS`, `ORIGIN_POLICY` (log-only), `FEATURE_FLAGS`, `XRAY_DB_PATH`, `AUTH_DB_PATH`, `LOG_LEVEL`, `DRY_RUN=1`. The tag is the short git SHA (`-dirty-<ts>` on a dirty tree), else `ts-<UTC>` with a warning.
+- `infra/ci-bootstrap.sh`: `PROJECT_ID`, `PROJECT_NUMBER`, `REGION`, `SERVICE`, `AR_REPO`, `GITHUB_REPO` (frbarreto/glassbank), `WIF_POOL` (github-pool), `WIF_PROVIDER` (github-provider), `EXPECT_ACCOUNT`, `DRY_RUN=1`. No `make` target.
+- `infra/deploy.sh` (`make deploy`): `PROJECT_ID`, `PROJECT_NUMBER` (520283334162), `REGION`, `SERVICE`, `AR_REPO`, `RUNTIME_SA`, `IMAGE_TAG`, `SKIP_BUILD=1`, `PUBLIC_BASE_URL` (unset: the hostname of the service's domain mapping, else the deterministic `run.app` URL), `PUBLIC_HOSTS`, `ORIGIN_POLICY` (log-only), `FEATURE_FLAGS`, `XRAY_DB_PATH`, `AUTH_DB_PATH`, `LOG_LEVEL`, `DRY_RUN=1`. The tag is the 12-character git SHA (`-dirty-<ts>` on a dirty tree), else `ts-<UTC>` with a warning; the pipeline passes it explicitly.
+- `infra/domain.sh [status]`: `PROJECT_ID`, `REGION`, `SERVICE`, `DOMAIN` (glassbank-mcp.abovethefog.app; not `HOSTNAME`, which bash pre-sets to the machine name), `DNS_PROJECT` (abovethefog), `DNS_ZONE` (abovethefog-app), `TTL` (300), `EXPECT_ACCOUNT`, `DRY_RUN=1`. No `make` target.
+- `infra/observe.sh`: `PROJECT_ID`, `PROJECT_NUMBER`, `REGION`, `SERVICE`, `HOST` (the deterministic `run.app` host), `ALERT_EMAIL` (default: the active gcloud account; never printed or stored), `CHECK_NAME`, `CHANNEL_NAME`, `POLICY_NAME`, `EXPECT_ACCOUNT`, `DRY_RUN=1`. No `make` target.
+- `infra/pause.sh pause|resume` (`make pause` / `make resume`): `PROJECT_ID`, `REGION`, `SERVICE`, `AR_REPO`, `RESUME_TAG`, `POLICY_NAME`, `DRY_RUN=1`, plus everything `deploy.sh` reads on resume.
+- `.github/workflows/pipeline.yml`: repository variables `GCP_PROJECT_ID`, `GCP_WIF_PROVIDER`, `GCP_DEPLOYER_SA`, `PUBLIC_BASE_URL`; `workflow_dispatch` inputs `image_tag` (redeploy an existing tag) and `origin_policy`.
 - `infra/smoke.sh` (`make smoke`): a positional base URL or `SMOKE_BASE_URL` (default: the live `status.url`), `SMOKE_HOSTS`, `CURL_TIMEOUT` (15), `DISCOVERY_BUDGET_S` (10), `REGISTER_ATTEMPTS` (30), `DRY_RUN=1`; exit 1 on any failure; checks 1, 6 and 7 are skipped for a local or `http://` target.
 - `docker compose -f infra/local/docker-compose.yml up --build`: `HOST_PORT`, `PUBLIC_BASE_URL`, `PUBLIC_HOSTS`, `OAUTH_SIGNING_KEY`, `XRAY_ADMIN_TOKEN` and every `src/config` knob.
 
 Deploy flags, never relaxed: `--min-instances=1 --max-instances=1 --no-cpu-throttling --timeout=3600 --concurrency=250 --cpu=1 --memory=1Gi --cpu-boost --execution-environment=gen2 --allow-unauthenticated --ingress=all --port=8080 --platform=managed`; env through `--set-env-vars` (`NODE_ENV=production`, `PUBLIC_BASE_URL`, `PUBLIC_HOSTS`, `ORIGIN_POLICY`, `FEATURE_FLAGS`, `XRAY_DB_PATH`, `AUTH_DB_PATH`, `LOG_LEVEL`); secrets only through `--set-secrets`; no `--use-http2`.
 
 ## Consumes
-`docs/DEPLOYMENT.md` (the flag and knob tables), Secret Manager, Artifact Registry `lake-fraude`, Cloud Build; `docs/DEPLOYMENT.md` also carries the operations runbook (rollback, pause, key rotation, cap tuning, diagnosis).
+`docs/DEPLOYMENT.md` (the flag and knob tables), Secret Manager, Artifact Registry `lake-fraude`, GitHub Actions with the Workload Identity pool `github-pool`, Cloud Build (fallback), Cloud DNS zone `abovethefog-app` (project `abovethefog`), Cloud Monitoring; `docs/DEPLOYMENT.md` also carries the operations runbook (rollback, pause, key rotation, cap tuning, diagnosis).
 
 ## Events owned
 None.
 
 ## Invariants held here
 - 1, 2, 3: `--max-instances=1`, `--no-cpu-throttling`, `--timeout=3600`, no HTTP/2; `smoke.sh` check 6 asserts all four on the live service.
-- 4: `PUBLIC_HOSTS` carries the deterministic `run.app` host plus whatever `status.url` reports; check 4 asserts the PRM `resource` and the issuer on every host.
+- 4: `PUBLIC_HOSTS` carries the custom hostname, the deterministic `run.app` host and whatever `status.url` reports; check 4 asserts the PRM `resource` and the issuer on every host.
 - 5: `--allow-unauthenticated`, asserted by check 7. 10: `ORIGIN_POLICY` defaults to `log-only`. 12: `0.0.0.0:8080`, a non-root image, git-SHA tags, secrets only via `--set-secrets`.
 
 ## How to test
@@ -53,7 +58,7 @@ DRY_RUN=1 ./infra/deploy.sh                    # exit 0: prints the build, deplo
 DRY_RUN=1 ./infra/bootstrap.sh                 # prints every gcloud command
 DRY_RUN=1 ./infra/smoke.sh                     # resolves the target and exits 0 without a request
 bash infra/smoke.sh http://localhost:8080      # against a running server: 24 passed, 0 failed, 3 skipped
-bash infra/smoke.sh https://<tunnel-host>      # 24 passed, 5 failed: all five are the undeployed Cloud Run service (infra/local/cloudflared.md)
+bash infra/smoke.sh https://<tunnel-host>      # the tunnel; checks 6 and 7 describe the Cloud Run service and say nothing about the tunnel
 docker compose -f infra/local/docker-compose.yml up --build   # the shipped image, NODE_ENV=production
 DRY_RUN=1 ./infra/ci-bootstrap.sh              # prints the deployer service account commands
 DRY_RUN=1 ./infra/pause.sh pause               # prints the delete; `resume` prints the redeploy of the newest image
@@ -70,4 +75,5 @@ The cloud path has run only through the pipeline (`SKIP_BUILD=1`); `make deploy 
 - The local image is arm64; Cloud Build produces amd64 from the same Dockerfile, untested locally.
 - `--platform=managed` is a hidden, default flag in current gcloud.
 - `smoke.sh` needs `jq` for strict JSON assertions; without it array checks are substring matches.
+- `make resume` recreates the service, so Cloud Run's revision numbering restarts at `00001` and `/health` shows a new `boot_id`; nothing depends on either.
 - The VM path is unproven: no gcloud command run, no certificate issued, the two containers never started together.

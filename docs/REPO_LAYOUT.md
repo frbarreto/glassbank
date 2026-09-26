@@ -2,7 +2,7 @@
 
 One npm package, directory-level ownership, frozen contracts, fakes for every interface, one document per block. Several agents can work in parallel without touching each other's files.
 
-## 1. Tree (as on disk, 2026-09-15)
+## 1. Tree (as on disk, 2026-09-26)
 
 ```
 mcp_bank/
@@ -49,7 +49,7 @@ mcp_bank/
     import-boundaries.test.ts
   scripts/         local-login.mjs (npm run login); smoke-worker-sqlite.mjs and its helpers
                    (worker-sqlite-task.mjs bomb-child.mjs probe-*.mjs check-worker-sqlite.ts)
-  infra/           Dockerfile cloudbuild.yaml bootstrap.sh deploy.sh smoke.sh
+  infra/           Dockerfile cloudbuild.yaml bootstrap.sh ci-bootstrap.sh deploy.sh smoke.sh domain.sh observe.sh pause.sh
     local/         docker-compose.yml cloudflared.md
     vm/            docker-compose.yml Caddyfile Caddyfile.ip-cert README.md   (documented alternative)
 ```
@@ -64,7 +64,7 @@ Each `src/<block>/` has `index.ts` (exports exactly one factory `create<Block>(d
 | app | `src/app.ts`, `src/composition.ts`, `src/server.ts`, `src/config/**`, `src/__tests__/**`, `test/e2e/**` |
 | auth, mcp, tools, bank-core, etl, xray | `src/<block>/**` and `docs/blocks/<block>.md`; mcp also `docs/observations/**` |
 | dashboard | `public/**`, `docs/blocks/dashboard.md` |
-| infra | `infra/**`, `docs/DEPLOYMENT.md`, `docs/blocks/infra.md`, `Makefile` |
+| infra | `infra/**`, `.github/**`, `docs/DEPLOYMENT.md`, `docs/blocks/infra.md`, `Makefile` |
 | root | `CLAUDE.md`, `README.md`, `package.json`, `tsconfig*.json`, `eslint.config.js`, `vitest.config.ts`, `docs/*.md`, `scripts/**` |
 
 A task names one block. Everything else is read-only for it; a needed change elsewhere is written as a proposal (in the task output or `docs/contracts/CHANGES.md`), never applied silently.
@@ -102,6 +102,7 @@ Task ticket: `docs/tasks/TEMPLATE.md`. Set `Status:` when you start and when you
 | Guard evidence | `npm run smoke:worker-sqlite` | Proves the SQL timeout mechanism |
 | Dashboard rendering | `node public/_dev/check-console.mjs` | Fixture in headless Chrome, zero console errors |
 | Deployment | `infra/smoke.sh <url>` | Anthropic's checklist plus invariant assertions |
+| Delivery | a push to `main` (`.github/workflows/pipeline.yml`) | check, e2e and the image smoke on the runner, then `infra/deploy.sh` and the live smoke; the deploy is skipped while the service is paused |
 
 `build` is `tsc -p tsconfig.build.json` (emits `dist/` from `src/` only); `tsconfig.json` also covers `test/` for `typecheck`, eslint and editors.
 

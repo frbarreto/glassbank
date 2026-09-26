@@ -24,7 +24,7 @@ Two logical micro-apps share one process and one origin (ADR-6): **mcp-server** 
 | xray | `src/xray/` | Emitter, redaction, ring buffer, SQLite WAL log at `XRAY_DB_PATH`, read model, SSE stream, pairing codes, viewer cookie; serves `/xray/s/:code` and `/xray/api/*`. | `xray.*`, `server.*` |
 | dashboard | `public/` | Vanilla-JS SPA (flat files, `panel-*.js`): `EventSource` client with reconnect, panels over a reducer, `?fixture=1` replay of `test/fixtures/events.jsonl`. Talks HTTP only. | none |
 | app | `src/app.ts`, `src/composition.ts`, `src/server.ts`, `src/config/` | Express 5 app, `trust proxy`, request id, `/health`, the landing page at `/`, mount order, env parsing, wiring by injection, SIGTERM handler. | none |
-| infra | `infra/` | `Dockerfile`, `cloudbuild.yaml`, `bootstrap.sh`, `deploy.sh` (the only place gcloud flags live), `smoke.sh`, `local/` (compose, tunnel notes), `vm/` (documented alternative). | none |
+| infra | `infra/`, `.github/workflows/`, `Makefile` | `Dockerfile`, `cloudbuild.yaml`, `bootstrap.sh`, `ci-bootstrap.sh`, `deploy.sh` (the only place the `gcloud run deploy` flags live), `smoke.sh`, `domain.sh`, `observe.sh`, `pause.sh`, `pipeline.yml`, `local/` (compose, tunnel notes), `vm/` (documented alternative). | none |
 
 ## 3. Tech stack
 
@@ -37,9 +37,9 @@ Two logical micro-apps share one process and one origin (ADR-6): **mcp-server** 
 | Tokens | jose 6.2.12, HS256 with `OAUTH_SIGNING_KEY` | One key signs codes, access, refresh, `txn`, `login` and viewer JWTs |
 | Embedded DB | better-sqlite3 13.0.3 | Scratch `:memory:` databases in forked runners (`etl`), the event log (`xray`), the DCR client table (`auth`); the only native dependency |
 | Dashboard | Vanilla HTML/CSS/JS, `EventSource` | No framework, no bundler |
-| Tests | vitest 3.2.7 (`npm run check`: 1295 tests / 60 files, `public/__tests__` included), `npm run e2e` (151 checks), `npm run e2e:dashboard` (28 checks), `npm run smoke:worker-sqlite` (6/6), `bash infra/smoke.sh <url>` | Blocks test against `src/testing/fakes.ts` and `test/fixtures/` |
+| Tests | vitest 3.2.7 (`npm run check`: 1296 tests / 60 files, `public/__tests__` included), `npm run e2e` (151 checks), `npm run e2e:dashboard` (28 checks), `npm run smoke:worker-sqlite` (6/6), `bash infra/smoke.sh <url>` | Blocks test against `src/testing/fakes.ts` and `test/fixtures/` |
 | Lint / format | eslint 10.10.0 + typescript-eslint 8.70.0 (`no-restricted-imports` boundaries), prettier 3.9.6 | |
-| Container | Multi-stage `infra/Dockerfile`; Cloud Build via `infra/cloudbuild.yaml`; image `us-central1-docker.pkg.dev/lake-fraude/lake-fraude/mcp-bank:<git-sha>` | Deploy flags only in `infra/deploy.sh` |
+| Container | Multi-stage `infra/Dockerfile`, built and pushed by GitHub Actions (`.github/workflows/pipeline.yml`; Cloud Build via `infra/cloudbuild.yaml` is the manual fallback); image `us-central1-docker.pkg.dev/lake-fraude/lake-fraude/mcp-bank:<git-sha12>` | Deploy flags only in `infra/deploy.sh` |
 
 ## 4. Identity and correlation chain
 
@@ -111,11 +111,11 @@ Rules, each implemented in the files named above:
 
 ## 7. Deployment topology
 
-- Target: Cloud Run service `mcp-bank`, project `lake-fraude`, `us-central1`, expected URL `https://mcp-bank-520283334162.us-central1.run.app`. Nothing is deployed yet: `infra/bootstrap.sh` and `infra/deploy.sh` have only run with `DRY_RUN=1`. The demo today is `node dist/server.js` on port 8080 behind a `cloudflared` quick tunnel with `ORIGIN_POLICY=log-only`.
-- `infra/deploy.sh` is the only place the flags live: `--min-instances=1 --max-instances=1 --no-cpu-throttling --timeout=3600 --concurrency=250 --cpu=1 --memory=1Gi --cpu-boost --execution-environment=gen2 --allow-unauthenticated --ingress=all --port=8080`, never `--use-http2`. The image is built by Cloud Build from `infra/cloudbuild.yaml` and tagged with the git SHA.
+- Target: Cloud Run service `mcp-bank`, project `lake-fraude`, `us-central1`, at `https://glassbank-mcp.abovethefog.app` (a domain mapping, D-25) with the `run.app` hostnames as aliases. Deployed since 2026-09-26 by GitHub Actions on every push to `main` (ADR-18); between demos the service is deleted and later recreated from the newest image (`make pause` / `make resume`, [DEPLOYMENT.md](DEPLOYMENT.md) section 6). The laptop-plus-`cloudflared` setup remains a way to test a branch (section 14 there).
+- `infra/deploy.sh` is the only place the flags live: `--min-instances=1 --max-instances=1 --no-cpu-throttling --timeout=3600 --concurrency=250 --cpu=1 --memory=1Gi --cpu-boost --execution-environment=gen2 --allow-unauthenticated --ingress=all --port=8080`, never `--use-http2`. The image is built by the pipeline (Cloud Build from `infra/cloudbuild.yaml` is the manual fallback) and tagged with the first 12 characters of the git SHA.
 - One instance is correctness, not cost: scratch databases, the ring buffer, grants, sessions and SSE fan-out are in-process (invariant 1); `/tmp` (event log, DCR table) is memory-backed and lost on instance replacement.
 - Secrets `mcp-bank-oauth-signing-key` and `mcp-bank-admin-token` reach the process only through `--set-secrets` as `OAUTH_SIGNING_KEY` and `XRAY_ADMIN_TOKEN`; the runtime service account `mcp-bank-run@lake-fraude.iam.gserviceaccount.com` holds `roles/secretmanager.secretAccessor` only.
-- `PUBLIC_HOSTS` lists both `run.app` forms (the tunnel host locally); `PUBLIC_BASE_URL` is corrected from `status.url` after the first deploy.
+- `PUBLIC_HOSTS` lists the custom hostname and both `run.app` forms (the tunnel host locally); `PUBLIC_BASE_URL` is the custom hostname (`deploy.sh` reads it from the domain mapping when it is not given) and the base of the pairing links.
 - Commands, env knobs, cost sheet and the VM alternative: [DEPLOYMENT.md](DEPLOYMENT.md); the post-deploy checklist is `infra/smoke.sh`.
 
 ## 8. Architecture decisions
@@ -141,6 +141,7 @@ Rules, each implemented in the files named above:
 | ADR-15 | Persona datasets are shared and immutable; mutable bank state is a copy-on-write overlay per `login_id`, LRU-capped (`MAX_PERSONA_OVERLAYS`) and TTL-reset (`PERSONA_OVERLAY_TTL_HOURS`); writes are atomic per call on the single event loop. |
 | ADR-16 | Rate limits are hand-rolled: `src/auth/rate-limit.ts` (per IP for `/register`, `/authorize`, `/consent`, `/token`; per `client_id` for `/token`; per `login_id` for new grants), `src/xray/rate-limit.ts` (failed pairing exchanges per IP) and the per-grant `tools/call` limit in `src/mcp/index.ts`. DCR clients, grants, personas, overlays, scratch databases, sessions and read-model indexes sit in bounded LRUs; every cap is an env knob. |
 | ADR-17 | The authorization server is hand-rolled (`src/auth`), not the SDK's `mcpAuthRouter`, so issuer, `resource` and `aud` follow the validated request `Host`; tools are registered on the SDK's low-level `Server` via `setRequestHandler` from the raw published JSON schema, never through `McpServer.registerTool`. |
+| ADR-18 | Delivery (D-20 to D-25): one private GitHub repository under `frbarreto`; GitHub Actions on every push to `main` (check, e2e, the image built, booted and smoked on the runner, pushed as `mcp-bank:<sha12>`, `infra/deploy.sh`, then the live smoke), keyless through the project's Workload Identity pool and a least-privilege deployer, no approval gate; the hostname is a Cloud Run domain mapping; between demos the service is deleted and later recreated from the newest image, and the pipeline skips push deploys while it is absent. |
 
 ## 9. Non-goals
 

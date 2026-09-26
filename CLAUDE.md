@@ -1,8 +1,8 @@
 # CLAUDE.md - Glass Bank
 
-A public remote MCP server for a fictional bank plus a live X-ray dashboard. Any MCP client (a claude.ai custom connector, Claude Code, Codex, MCP Inspector) connects over OAuth 2.1 with a mock login, uses Ramp-style tools (`load_*` -> `process_data` -> `execute_query` -> `clear_table`, two guarded write tools) and can watch everything the server observes at `/xray`. All bank data is fake and seeded deterministically. One npm package, TypeScript ESM, one Node process, one Cloud Run service pinned to one instance.
+A public remote MCP server for a fictional bank plus a live X-ray dashboard. Any MCP client (a claude.ai custom connector, Claude Code, Codex, MCP Inspector) connects over OAuth 2.1 with a mock login, uses Ramp-style tools (`load_*` -> `process_data` -> `execute_query` -> `clear_table`, two guarded write tools) and can watch everything the server observes at `/xray`. All bank data is fake and seeded deterministically. One npm package, TypeScript ESM, one Node process, one Cloud Run service pinned to one instance, deployed by GitHub Actions on every push to `main` and deleted between demos.
 
-**State (2026-09-26):** **deployed**. Cloud Run service `mcp-bank` in `lake-fraude`, deployed by `.github/workflows/pipeline.yml` on every push to `main` of https://github.com/frbarreto/glassbank (private, no branch protection, D-20 to D-25); live at `https://glassbank-mcp.abovethefog.app` (landing page at `/`, MCP at `/mcp`, dashboard at `/xray/`; D-25; `mcp-bank-520283334162.us-central1.run.app` and Cloud Run's `mcp-bank-wdm7njj4pa-uc.a.run.app` also answer), `ORIGIN_POLICY=log-only`, contracts v0.6, uptime check and email alert on `/health`. Codex and ChatGPT connected earlier through a tunnel (`docs/observations/claude-ai.md`); no claude.ai client yet. Next steps (real clients, `allowlist`, the open X-ray redesign tasks): `docs/BUILD_PLAN.md`.
+**State (2026-09-26):** **deployed, paused between demos.** Cloud Run service `mcp-bank` in `lake-fraude`, deployed by `.github/workflows/pipeline.yml` on every push to `main` of https://github.com/frbarreto/glassbank (private, no branch protection, D-20 to D-25). `make pause` deletes the service when no demo is planned and `make resume` recreates it in about 45 s; when up, it is live at `https://glassbank-mcp.abovethefog.app` (landing page at `/`, MCP at `/mcp`, dashboard at `/xray/`, status at `/health`; D-25; the `run.app` hostnames also answer), `ORIGIN_POLICY=log-only`, contracts v0.6, uptime check and email alert on `/health`. Codex and ChatGPT connected earlier through a tunnel (`docs/observations/claude-ai.md`); no claude.ai client yet. Next steps (real clients, `allowlist`, the open X-ray redesign tasks): `docs/BUILD_PLAN.md`.
 
 ## Documents (read only what the task needs)
 
@@ -14,7 +14,7 @@ A public remote MCP server for a fictional bank plus a live X-ray dashboard. Any
 | One page per block: files, interface, events, tests, gaps | `docs/blocks/<block>.md` |
 | Tool catalog, scopes, the `rationale` convention | `docs/TOOL_CATALOG.md` |
 | Event catalogue, SSE, dashboard routes and panels | `docs/XRAY_EVENT_MODEL.md` |
-| Deploy, operate, every env knob | `docs/DEPLOYMENT.md` |
+| Deploy, CI/CD, pause and resume, hostname, monitoring, every env knob | `docs/DEPLOYMENT.md` |
 | Roadmap and backlog | `docs/BUILD_PLAN.md` |
 | Assumptions `A-xx` and user decisions `D-x` | `docs/ASSUMPTIONS.md` |
 | Ramp lineage and copied fragments | `docs/RAMP_REFERENCE.md`, `THIRD_PARTY_NOTICES.md` |
@@ -26,13 +26,13 @@ Ids: `A-xx` assumption, `D-x` user decision, `ADR-x` architecture decision. Alwa
 
 ## Blocks
 
-`contracts`, `app` (`src/app.ts`, `src/composition.ts`, `src/server.ts`, `src/config/`), `auth`, `mcp`, `tools`, `bank-core`, `etl`, `xray`, `dashboard` (`public/`), `infra`. Each block exports one factory `create<Block>(deps)`; `app` wires everything by injection; no global mutable state outside the composition root.
+`contracts`, `app` (`src/app.ts`, `src/composition.ts`, `src/server.ts`, `src/config/`), `auth`, `mcp`, `tools`, `bank-core`, `etl`, `xray`, `dashboard` (`public/`), `infra` (`infra/`, `.github/`, `Makefile`). Each block exports one factory `create<Block>(deps)`; `app` wires everything by injection; no global mutable state outside the composition root.
 
 - Import rules (ESLint-enforced): a block imports only `src/contracts`; `mcp` may also import `tools`; only `mcp` imports the MCP SDK; only `auth` and `xray` import `jose`; only `auth`, `etl` and `xray` import `better-sqlite3`; the dashboard talks HTTP only.
 - Contracts are append-only: never rename or remove an event type, tool, scope, field or route. Propose additions in `docs/contracts/CHANGES.md`.
 - One task edits one block. `src/contracts`, the `app` files, `package.json` and `CLAUDE.md` change only in a task that names them.
 
-## Commands (every line verified on 2026-09-09; `check`, `e2e`, `e2e:dashboard` and `check-console` re-verified 2026-09-14/15)
+## Commands (every line verified on 2026-09-09; `check`, `e2e`, `e2e:dashboard` and `check-console` re-verified 2026-09-14/15; `check`, the local `smoke.sh`, every `infra/*.sh`, `make pause` / `make resume` and the pipeline verified 2026-09-26)
 
 ```
 npm ci                        # Node 22 (.nvmrc); 23 works
@@ -84,7 +84,8 @@ Dashboard: `http://localhost:8080/xray/?fixture=1` replays a recorded session; a
 - Tool errors are `isError: true` with the text built by `toolErrorText` in `src/contracts/tools.ts` ("Ran into an error: ... Communicate this to the user and consider retrying if the error seems transient.").
 - Cite `A-xx`, `D-x` and `ADR-x` in comments and tests when a behaviour depends on them.
 - A new npm dependency gets a line in `docs/DEPENDENCIES.md`; a copied Ramp fragment a line in `THIRD_PARTY_NOTICES.md`; a new fact about a real client a line in `docs/observations/claude-ai.md`.
-- gcloud flags live only in `infra/deploy.sh`. Never raise `--max-instances`, drop `--no-cpu-throttling`, lower `--timeout` or add `--use-http2`.
+- `gcloud run deploy` flags live only in `infra/deploy.sh`; the other `infra/*.sh` scripts hold one-time or operational gcloud commands, each honouring `DRY_RUN=1`. Never raise `--max-instances`, drop `--no-cpu-throttling`, lower `--timeout` or add `--use-http2`.
+- A push to `main` deploys and restarts the instance, which wipes the in-memory state (scratch tables, event log, bank writes): during a live demo, work on a branch. While paused, a push tests and builds but does not deploy; `make resume` or **Run workflow** in GitHub Actions turns the service back on.
 - Never: a session map or `Mcp-Session-Id`; model-authored SQL on the main event loop; `McpServer.registerTool` for the catalog; the SDK auth router; filtering write tools out of `tools/list` for a missing write scope; binding pairing codes or viewer cookies to a grant instead of the login; advertising CIMD before it is implemented and observed; returning rows from a `load_*` tool; gating behaviour on `clientInfo.name` or `User-Agent`; a native dependency other than `better-sqlite3`, a front-end framework or bundler, Redis/Firestore or a second service without a `CHANGES.md` proposal.
 - Everything is in English, including comments, UI strings and seed labels. Amounts are USD cents (D-1).
 - Commits: `[block] summary` with a conventional body; branch `feat/<block>-<task>` or directly on `main` (no protection rules, D-22); commit or push only when asked; push only as GitHub account `frbarreto` over the HTTPS remote (D-21: the Mac's SSH key belongs to another account); every push to `main` deploys through `.github/workflows/pipeline.yml` (D-23); never commit `.env` or secrets.

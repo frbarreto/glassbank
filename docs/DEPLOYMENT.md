@@ -35,7 +35,7 @@ IMAGE_TAG=<tag> ./infra/deploy.sh                 # build and deploy under a cho
 SKIP_BUILD=1 IMAGE_TAG=<tag> ./infra/deploy.sh    # deploy only: reuse an image that already exists
 ```
 
-In the cloud the pipeline (section 15) builds and pushes the image itself and then runs this script with `SKIP_BUILD=1 IMAGE_TAG=<sha12>` (D-24); the Cloud Build path below is the manual fallback from the Mac.
+In the cloud the pipeline (section 15) builds and pushes the image itself and then runs this script with `SKIP_BUILD=1 IMAGE_TAG=<sha12>` (D-24); the Cloud Build path below is the manual fallback from the Mac. With `PUBLIC_BASE_URL` unset, the script uses the hostname of the service's domain mapping when one exists (section 16), else the deterministic `run.app` URL.
 
 Steps, every one with `--project=lake-fraude --region=us-central1`:
 
@@ -79,11 +79,11 @@ gcloud run services update-traffic mcp-bank --region=us-central1 --to-latest   #
 ## 6. Pause and resume
 
 ```
-gcloud run services delete mcp-bank --region=us-central1   # stops the bill; secrets, IAM and the service account stay
-./infra/deploy.sh && ./infra/smoke.sh                       # resume; the run.app URL derives from name + project number, so it is identical
+make pause     # disable the uptime alert, delete the service: the bill for it stops
+make resume    # redeploy the newest image in Artifact Registry (or RESUME_TAG), re-enable the alert
 ```
 
-`make pause` / `make resume` (`infra/pause.sh`) wrap these two commands; `resume` redeploys the newest image in Artifact Registry (or `RESUME_TAG`) and never rebuilds. There is no softer pause: `--min-instances=0` would let the instance idle out and stop the heartbeats, TTL eviction and fan-out (invariant 2). Resuming costs users what a deploy costs; they may need to reconnect once.
+`infra/pause.sh` behind both; `DRY_RUN=1` prints. Paused, nothing is billed but cents of image storage: the domain mapping, the secrets, IAM, the images and the uptime check stay. A push to `main` while paused runs the tests and pushes the image but does not deploy (the pipeline's deploy job skips a push when the service is absent); the pipeline's **Run workflow** button in GitHub Actions resumes too, building the current `main`. `make resume` never rebuilds, and `deploy.sh` picks the mapped hostname as `PUBLIC_BASE_URL` when none is given, so both hostnames come back with the right OAuth identity. There is no softer pause: `--min-instances=0` would let the instance idle out and stop the heartbeats, TTL eviction and fan-out (invariant 2). Resuming costs users what a deploy costs; they may need to reconnect once.
 
 ## 7. Rotate the signing key and the admin token
 
@@ -213,7 +213,7 @@ GitHub Actions on https://github.com/frbarreto/glassbank (D-21 to D-24). Keyless
 
 | Trigger | Jobs | Deploys |
 |---|---|---|
-| push to `main` | `check` (`npm run check`), `e2e` (`npm run build && npm run e2e`), `image` (build `infra/Dockerfile`, boot it with `NODE_ENV=production` and random secrets, `infra/smoke.sh http://localhost:8080`, stop it and assert exit 0, push `mcp-bank:<sha12>`), then `deploy` | yes |
+| push to `main` | `check` (`npm run check`), `e2e` (`npm run build && npm run e2e`), `image` (build `infra/Dockerfile`, boot it with `NODE_ENV=production` and random secrets, `infra/smoke.sh http://localhost:8080`, stop it and assert exit 0, push `mcp-bank:<sha12>`), then `deploy` | yes, unless paused (section 6): the job skips when the service does not exist |
 | `pull_request` | `check`, `e2e`, `image` without the push | no |
 | `workflow_dispatch` | `image_tag` empty: as a push; `image_tag=<sha12>`: `deploy` only (the rollback, section 5); `origin_policy` selects `log-only` or `allowlist` (section 8) | yes, from `main` only |
 
@@ -233,4 +233,4 @@ Done on 2026-09-26: mapping and record created at 19:23 UTC, `CertificateProvisi
 
 ## 17. Uptime check and alert - `infra/observe.sh`
 
-Cloud Monitoring, inside the free tier: an email notification channel "Glass Bank alerts" (the address is the active gcloud account, passed on the command line and never written to the repository), the uptime check `glass-bank-health` (GET `https://mcp-bank-520283334162.us-central1.run.app/health` every 5 minutes, 10 s timeout, expects 200 and `"status":"ok"`), and the alert policy "Glass Bank /health down" (an incident plus an email after 10 minutes of failures). Idempotent; `DRY_RUN=1` prints. Created on 2026-09-26. `make pause` trips it by design: silence it meanwhile with `gcloud monitoring policies update <policy name> --project=lake-fraude --no-enabled` and re-enable it after `make resume`. Console: https://console.cloud.google.com/monitoring/uptime?project=lake-fraude
+Cloud Monitoring, inside the free tier: an email notification channel "Glass Bank alerts" (the address is the active gcloud account, passed on the command line and never written to the repository), the uptime check `glass-bank-health` (GET `https://mcp-bank-520283334162.us-central1.run.app/health` every 5 minutes, 10 s timeout, expects 200 and `"status":"ok"`), and the alert policy "Glass Bank /health down" (an incident plus an email after 10 minutes of failures). Idempotent; `DRY_RUN=1` prints. Created on 2026-09-26. `make pause` disables the alert policy before deleting the service and `make resume` re-enables it, so a planned pause sends no email. Console: https://console.cloud.google.com/monitoring/uptime?project=lake-fraude

@@ -18,9 +18,8 @@
 # which never changes), ALERT_EMAIL (default: the active gcloud account; never written to the repo),
 # EXPECT_ACCOUNT. Needs the gcloud beta component for the channel command.
 #
-# `make pause` deletes the service, so the check fails and the incident opens: expected. To silence it
-# while paused:  gcloud monitoring policies update <policy name> --project=<project> --no-enabled
-# and `--enabled` again after `make resume`.
+# `make pause` disables the alert policy before deleting the service and `make resume` re-enables it
+# (infra/pause.sh), so a planned pause sends no email.
 
 set -euo pipefail
 

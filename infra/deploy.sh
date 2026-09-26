@@ -160,6 +160,23 @@ preflight() {
   # canonical base; only the default is replaced by status.url in correct_public_hosts (A-36).
   PUBLIC_BASE_URL_EXPLICIT=0
   [ -n "${PUBLIC_BASE_URL:-}" ] && PUBLIC_BASE_URL_EXPLICIT=1
+  # Unset (a deploy or `make resume` from the Mac): follow the custom hostname mapped to this service
+  # (infra/domain.sh, D-25), so a manual deploy keeps the identity the pipeline gives it. The
+  # mapping outlives the service, so this also holds right after `make pause`.
+  if [ "$PUBLIC_BASE_URL_EXPLICIT" = "0" ]; then
+    if [ "$DRY_RUN" = "1" ]; then
+      say "# would look up a domain mapping for $SERVICE and use it as PUBLIC_BASE_URL"
+    else
+      local mapped
+      mapped="$(gcloud beta run domain-mappings list --project="$PROJECT_ID" --region="$REGION" \
+        --filter="spec.routeName=$SERVICE" --format='value(metadata.name)' 2>/dev/null | head -1 || true)"
+      if [ -n "$mapped" ]; then
+        PUBLIC_BASE_URL="https://$mapped"
+        PUBLIC_BASE_URL_EXPLICIT=1
+        say "domain mapping   : $mapped (used as PUBLIC_BASE_URL)"
+      fi
+    fi
+  fi
   PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-$DETERMINISTIC_URL}"
   PUBLIC_HOSTS="${PUBLIC_HOSTS:-$DETERMINISTIC_HOST}"
   PUBLIC_HOSTS="$(append_host "$PUBLIC_HOSTS" "${PUBLIC_BASE_URL#https://}")"

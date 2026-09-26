@@ -161,7 +161,22 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v3
 
+      # `make pause` deletes the service. A push while paused must not switch it back on (and
+      # restart the bill); only an explicit Run workflow or `make resume` does.
+      - name: Skip a push deploy while the service is paused
+        id: paused
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] && ! gcloud run services describe mcp-bank \
+              --project="${{ vars.GCP_PROJECT_ID }}" --region=us-central1 >/dev/null 2>&1; then
+            echo "paused=true" >> "$GITHUB_OUTPUT"
+            echo "## Paused" >> "$GITHUB_STEP_SUMMARY"
+            echo "The service is paused (make pause). The image $IMAGE_TAG was pushed; nothing was deployed. Run this workflow manually, or make resume, to turn it back on." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "paused=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy (every gcloud run flag lives in infra/deploy.sh)
+        if: steps.paused.outputs.paused != 'true'
         env:
           SKIP_BUILD: "1"
         run: |
@@ -170,6 +185,7 @@ jobs:
           ./infra/deploy.sh 2>&1 | tee deploy.log
 
       - name: Smoke the live service
+        if: steps.paused.outputs.paused != 'true'
         run: |
           set -euo pipefail
           if [ -n "${PUBLIC_BASE_URL:-}" ]; then
@@ -180,7 +196,7 @@ jobs:
           ./infra/smoke.sh 2>&1 | tee smoke.log
 
       - name: Job summary
-        if: always()
+        if: ${{ always() && steps.paused.outputs.paused != 'true' }}
         run: |
           {
             echo "## Deploy"

@@ -50,7 +50,7 @@ docker compose -f infra/local/docker-compose.yml up --build   # the shipped imag
 cloudflared tunnel --url http://localhost:8080   # then restart with PUBLIC_BASE_URL = tunnel URL and PUBLIC_HOSTS = '<tunnel host>;localhost:8080'
 DRY_RUN=1 ./infra/deploy.sh   # prints every gcloud command; `make deploy` and `make smoke` run for real (the manual fallback)
 DRY_RUN=1 ./infra/ci-bootstrap.sh   # the GitHub Actions deployer service account (ran for real 2026-09-26)
-make pause / make resume      # delete the Cloud Run service to stop the bill / redeploy the newest image (infra/pause.sh)
+make pause / make resume      # stop the bill (alert off, service deleted; pushes then skip the deploy) / redeploy the newest image, alert on (infra/pause.sh)
 DRY_RUN=1 ./infra/domain.sh   # the hostname mapping + its CNAME (ran for real 2026-09-26); `./infra/domain.sh status` shows the certificate
 DRY_RUN=1 ./infra/observe.sh  # uptime check + email alert on /health (ran for real 2026-09-26)
 git push origin main          # runs .github/workflows/pipeline.yml: check, e2e, image, deploy + smoke (D-23)

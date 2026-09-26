@@ -2,7 +2,7 @@
 
 A public remote MCP server for a fictional bank plus a live X-ray dashboard. Any MCP client (a claude.ai custom connector, Claude Code, Codex, MCP Inspector) connects over OAuth 2.1 with a mock login, uses Ramp-style tools (`load_*` -> `process_data` -> `execute_query` -> `clear_table`, two guarded write tools) and can watch everything the server observes at `/xray`. All bank data is fake and seeded deterministically. One npm package, TypeScript ESM, one Node process, one Cloud Run service pinned to one instance.
 
-**State (2026-09-15):** code complete and green, contracts v0.5, **not deployed**. It runs on the developer's Mac behind a cloudflared quick tunnel with `ORIGIN_POLICY=log-only`. Codex and ChatGPT have connected through that tunnel (`docs/observations/claude-ai.md`); no claude.ai client has connected yet. Next steps, the open X-ray redesign tasks included: `docs/BUILD_PLAN.md`.
+**State (2026-09-26):** code complete and green, contracts v0.5, source on GitHub `frbarreto/glassbank` (public, no branch protection, D-20 to D-25), **not deployed**. It runs on the developer's Mac behind a cloudflared quick tunnel with `ORIGIN_POLICY=log-only`. Codex and ChatGPT have connected through that tunnel (`docs/observations/claude-ai.md`); no claude.ai client has connected yet. Next steps (GCP bootstrap, the GitHub Actions pipeline, the hostname `glassbank-mcp.abovethefog.app`, the open X-ray redesign tasks): `docs/BUILD_PLAN.md`.
 
 ## Documents (read only what the task needs)
 
@@ -82,4 +82,4 @@ Dashboard: `http://localhost:8080/xray/?fixture=1` replays a recorded session; a
 - gcloud flags live only in `infra/deploy.sh`. Never raise `--max-instances`, drop `--no-cpu-throttling`, lower `--timeout` or add `--use-http2`.
 - Never: a session map or `Mcp-Session-Id`; model-authored SQL on the main event loop; `McpServer.registerTool` for the catalog; the SDK auth router; filtering write tools out of `tools/list` for a missing write scope; binding pairing codes or viewer cookies to a grant instead of the login; advertising CIMD before it is implemented and observed; returning rows from a `load_*` tool; gating behaviour on `clientInfo.name` or `User-Agent`; a native dependency other than `better-sqlite3`, a front-end framework or bundler, Redis/Firestore or a second service without a `CHANGES.md` proposal.
 - Everything is in English, including comments, UI strings and seed labels. Amounts are USD cents (D-1).
-- Commits: `[block] summary` with a conventional body; branch `feat/<block>-<task>`; commit or push only when asked; never commit `.env` or secrets.
+- Commits: `[block] summary` with a conventional body; branch `feat/<block>-<task>` or directly on `main` (no protection rules, D-22); commit or push only when asked; push only as GitHub account `frbarreto` over the HTTPS remote (D-21: the Mac's SSH key belongs to another account); never commit `.env` or secrets.

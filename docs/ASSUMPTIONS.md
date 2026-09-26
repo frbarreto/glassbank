@@ -77,7 +77,7 @@ no GCP deploy so far; Codex connected through the cloudflared tunnel on 2026-09-
 
 ## Decisions
 
-Settled by the user on 2026-09-08 except D-9; changing one is a change request in `docs/contracts/CHANGES.md`.
+Settled by the user on 2026-09-08 (D-1 to D-16), 2026-09-09 (D-17 to D-19) and 2026-09-26 (D-20 to D-25), except D-9; changing one is a change request in `docs/contracts/CHANGES.md`.
 
 | # | Decision | Outcome |
 |---|---|---|
@@ -91,7 +91,7 @@ Settled by the user on 2026-09-08 except D-9; changing one is a change request i
 | D-8 | License | MIT plus `THIRD_PARTY_NOTICES.md` |
 | D-9 | First live client | **Open.** Codex (OpenAI, `codex-mcp-client/0.153.4`) connected through the cloudflared tunnel on 2026-09-09 and ran the full load -> process -> query -> clear flow; ChatGPT has also connected through the tunnel (owner report, not recorded); claude.ai has not connected. |
 | | | Someone with an individual claude.ai account (Free, Pro or Max; one custom connector on Free) has to add the connector and finish the OAuth popup; Claude Code and Inspector can be driven from this machine. |
-| D-10 | Repository hosting | Local git on `main`, no remote; deploys run from the Mac |
+| D-10 | Repository hosting | Superseded on 2026-09-26 by D-21 and D-24 (was: local git only, deploys from the Mac) |
 | D-11 | Business-role scoping | Deferred (A-33) |
 | D-12 | Tool naming | snake_case |
 | D-13 | Writes on shared personas | Copy-on-write per login (ADR-15) |
@@ -101,3 +101,9 @@ Settled by the user on 2026-09-08 except D-9; changing one is a change request i
 | D-17 | X-ray layout | A vertical, append-only spine: one line per call that opens in place into REQUEST / INSIDE / RESPONSE; no free 2D canvas |
 | D-18 | Actor-band board | Retired; its claims live in the triptych and the INSIDE cards |
 | D-19 | Call inspector | Becomes a Bytes drawer of raw envelopes only (task T5, not built yet) |
+| D-20 | Repository topology | One repository, `glassbank`, for server, dashboard, `infra/` and the pipeline; no platform or front-end repo |
+| D-21 | GitHub account | Everything under the personal account `frbarreto`, public: https://github.com/frbarreto/glassbank. Commits and pushes only from that account, over an HTTPS remote (the Mac's SSH key belongs to another account); commit identity `Felipe Barreto <66271408+frbarreto@users.noreply.github.com>` |
+| D-22 | Branching | GitHub Flow without protection rules: direct pushes to `main` allowed; `feat/<block>-<task>` branches and PRs optional; tags `v0.x.y` mark milestones |
+| D-23 | Environments and gates | One always-on production service; no GitHub Environment, no approval step; every push to `main` that passes CI deploys |
+| D-24 | Build and deploy path | GitHub Actions builds `infra/Dockerfile`, pushes `mcp-bank:<git sha12>` to Artifact Registry and runs `SKIP_BUILD=1 IMAGE_TAG=<sha12> ./infra/deploy.sh`; keyless auth through the existing Workload Identity pool `github-pool` and a dedicated deployer service account; `make deploy` from the Mac stays as the fallback |
+| D-25 | Hostname and cost | `glassbank-mcp.abovethefog.app` through Cloud Run domain mapping (Cloud DNS zone `abovethefog-app` in project `abovethefog`; the apex and `www` are not touched); the `run.app` URL stays as a second host; `make pause` / `make resume` for idle weeks; the invariant flags stay |

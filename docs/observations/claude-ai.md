@@ -1,6 +1,6 @@
 # Observations: what claude.ai, Claude Code and MCP Inspector actually sent
 
-Facts only, with dates. Interpretation goes to `docs/ASSUMPTIONS.md` and `docs/contracts/CHANGES.md`. Nothing is deployed: every observation below was made against `node dist/server.js` on the developer's Mac, port 8080, `ORIGIN_POLICY=log-only`. Local clients reached it on loopback. Codex reached it on 2026-09-09 through a cloudflared quick tunnel - the first non-local client, and not a deployment.
+Facts only, with dates. Interpretation goes to `docs/ASSUMPTIONS.md` and `docs/contracts/CHANGES.md`. Deployed on Cloud Run since 2026-09-26 (`docs/DEPLOYMENT.md`); every observation dated before that was made against `node dist/server.js` on the developer's Mac, port 8080, `ORIGIN_POLICY=log-only`. Local clients reached it on loopback. Codex reached it on 2026-09-09 through a cloudflared quick tunnel - the first non-local client, and not a deployment.
 
 ## What every `/mcp` request records
 
@@ -23,6 +23,16 @@ Signals to watch: a header or negotiated version at or above `2026-07-28` flips 
 | MCP Inspector CLI | 2.5.0 | 2026-09-08 | `2025-11-25`; header absent on `initialize`, `2025-11-25` after | `{"name":"inspector-cli","version":"2.5.0"}` | `{}` on one run; `{"roots":{"listChanged":true},"extensions":{"io.modelcontextprotocol/tasks":{},"io.modelcontextprotocol/ui":{"mimeTypes":["text/html;profile=mcp-app"]}}}` on another - invocation-dependent; the server advertises neither extension and the client proceeded | absent | `{"client_name":"MCP Inspector","redirect_uris":["http://127.0.0.1:6276/oauth/callback"],"token_endpoint_auth_method":"none","application_type":"native"}` | `User-Agent: node`, loopback. Probes `/.well-known/oauth-protected-resource/mcp` first (never the bare path), then `/.well-known/oauth-authorization-server` only. Opens `GET /mcp` on every connection and tolerates the 405. One `tools/list` per connection, no reconnect loop. Reconnected with a token stored from a previous server process, no OAuth (A-11). Its `/oauth/callback` is the development-only loopback of A-13, refused under `NODE_ENV=production`. `--strict` passes all 17 schemas, including `create_transfer`'s `oneOf`. The browser leg needs a TTY or `MCP_AUTO_OPEN_ENABLED=true` |
 | Codex (OpenAI) | `codex-mcp-client/0.153.4` | 2026-09-09 | requests `2025-06-18`; first sends `GET /mcp` with `MCP-Protocol-Version: 2024-11-05` (405) | title `Codex` | `elicitation: {form, url}`; later connections also `extensions: io.modelcontextprotocol/ui, openai/form` | absent | `{client_name:"Codex", redirect_uris:["http://127.0.0.1:<random port>/callback"], token_endpoint_auth_method:"none", application_type:"native"}`, one fresh registration per connection | First non-local client, through the cloudflared tunnel, not a deployment. Sequence: `GET /mcp` (405) -> unauthenticated `POST /mcp` (401) -> OAuth -> `initialize` twice per connection -> `tools/list` and `resources/list`. No `Mcp-Session-Id`. Requested every scope, including `cards:write`, `transfers:write` and `xray:read`. Chose the shared persona `per_ava_stone`. `rationale` values in the user's language (Portuguese). Ran `get_current_user`, `load_accounts`, `get_tool_availability`, `process_data`, `execute_query`, `clear_table` successfully. Remote address IPv6, recorded as a `/48` prefix |
 
+## Cloud Run itself (2026-09-26)
+
+Measured from the developer's Mac against revision `mcp-bank-00004-9vw`, `ORIGIN_POLICY=log-only`:
+
+- Both hostnames serve the app with the right OAuth identity: `mcp-bank-520283334162.us-central1.run.app` (deterministic) and `mcp-bank-wdm7njj4pa-uc.a.run.app` (Cloud Run's `status.url`); `deploy.sh` put both in `PUBLIC_HOSTS` (A-36).
+- Discovery: each of the three documents answers in 0.26 to 0.34 s end to end from Brazil, TLS handshake included (0.09 to 0.17 s), against the 10 s budget; smoke check 8 agrees.
+- `http://` answers 302 to `https://`; responses carry `server: Google Frontend` and `alt-svc: h3`; the app's `x-request-id` comes through.
+- Google's front end intercepts exactly `/healthz` (query string included) with its own 404 and never forwards it; `/healthz/` and `/health` reach the app. Contracts v0.6 made `/health` the public name.
+- `gcloud run services describe --format=yaml` carries a default `startupProbe` with `timeoutSeconds: 240` above the service's own `timeoutSeconds: 3600`; smoke check 6 reads the service field.
+
 ## Still unobserved
 
 - claude.ai (web, Desktop, mobile): no connector has ever been created; nothing is deployed and D-9 (which account runs the first live test) is open.
@@ -31,7 +41,7 @@ Signals to watch: a header or negotiated version at or above `2026-07-28` flips 
 - Any request from Anthropic's egress range `160.79.104.0/21`: `anthropic_egress` has never been `true`.
 - Any `Origin` header from a browser-based client. Every recorded client sent none, so `log-only` and `allowlist` have been indistinguishable.
 - A-40 (does Claude act on the 403 step-up), A-41 (does the step-up popup carry the `login_id` cookie), A-05 / A-06 (`rationale` quality from Claude), A-17 (Origin values), and the `tools/list` cadence ("every 25 to 80 s" is Anthropic's documentation, not a measurement here).
-- Cloud Run itself: cold-start and TLS cost against the 10 s discovery budget, both `run.app` hostnames, and the proxy hop count behind `app.set('trust proxy', 1)` (only the cloudflared shape has been seen).
+- Cloud Run: a cold start (never happens with one always-on instance) and the proxy hop count behind `app.set('trust proxy', 1)`, which needs a `remote_ip_prefix` recorded from a real client.
 
 ## Decisions taken from these observations
 

@@ -217,3 +217,15 @@ GitHub Actions on https://github.com/frbarreto/glassbank (D-21 to D-24). Keyless
 | `workflow_dispatch` | `image_tag` empty: as a push; `image_tag=<sha12>`: `deploy` only (the rollback, section 5); `origin_policy` selects `log-only` or `allowlist` (section 8) | yes, from `main` only |
 
 `deploy` runs `SKIP_BUILD=1 IMAGE_TAG=<sha12> ORIGIN_POLICY=<input> PUBLIC_BASE_URL=<variable> ./infra/deploy.sh`, then `./infra/smoke.sh` (with `SMOKE_BASE_URL` and `SMOKE_HOSTS` covering the custom hostname and the `run.app` host once `PUBLIC_BASE_URL` is set), and writes the deploy summary and the smoke counts to the job summary. `<sha12>` is the value `deploy.sh` derives locally, so `make deploy` of the same commit reuses the tag. Runs on `main` queue behind each other; superseded pull-request runs are cancelled. Fork pull requests get no OIDC token, so they can never deploy.
+
+## 16. Custom hostname - `infra/domain.sh`
+
+`glassbank-mcp.abovethefog.app` (D-25) is a Cloud Run domain mapping on the service (a preview feature; free; managed certificate) plus one CNAME in the Cloud DNS zone `abovethefog-app` of project `abovethefog`, where the domain lives. The zone's apex and `www` point at Firebase Hosting and are never touched; the script refuses them. The domain is verified for the deploying Google account (`gcloud domains list-user-verified`). Needs the gcloud beta component.
+
+```
+DRY_RUN=1 ./infra/domain.sh      # print the two commands
+./infra/domain.sh                # create the mapping and the record if missing, then print the status
+./infra/domain.sh status         # certificate provisioning, the record, what the name resolves to
+```
+
+Ran on 2026-09-26 19:23 UTC: mapping created (`DomainRoutable: True`), `glassbank-mcp.abovethefog.app. CNAME ghs.googlehosted.com.` created, certificate pending (Cloud Run re-checks DNS on an hourly interval). Once `https://glassbank-mcp.abovethefog.app/health` answers: `gh variable set PUBLIC_BASE_URL --repo frbarreto/glassbank --body "https://glassbank-mcp.abovethefog.app"`, then redeploy (a push, or a dispatch with the current tag), so `deploy.sh` puts both hostnames in `PUBLIC_HOSTS` and the pairing links use the hostname (invariant 4, A-36). The `run.app` URL keeps working. `make pause` keeps the mapping; after `make resume`, `./infra/domain.sh status` shows whether it re-attached.

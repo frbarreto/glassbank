@@ -76,8 +76,9 @@ preflight() {
   fi
 
   if [ "$DRY_RUN" != "1" ]; then
-    gcloud components list --filter='id:beta' --format='value(state.name)' 2>/dev/null | grep -qi installed \
-      || die "the gcloud beta component is missing: gcloud components install beta"
+    # A functional probe: the beta command must exist and the account must be allowed to list.
+    gcloud beta run domain-mappings list --project="$PROJECT_ID" --region="$REGION" --limit=1 >/dev/null 2>&1 \
+      || die "cannot run 'gcloud beta run domain-mappings list': install the beta component (gcloud components install beta) or check access to $PROJECT_ID"
     gcloud run services describe "$SERVICE" --project="$PROJECT_ID" --region="$REGION" >/dev/null 2>&1 \
       || die "service $SERVICE not found in $PROJECT_ID / $REGION; deploy first (pipeline or make deploy)."
     local apex="${HOSTNAME_TO_MAP#*.}"

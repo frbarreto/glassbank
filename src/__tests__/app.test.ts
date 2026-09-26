@@ -75,6 +75,53 @@ describe('placeholder dashboard', () => {
   });
 });
 
+describe('GET / (landing page)', () => {
+  it('answers 200 with the MCP URL and the way into the dashboard', async () => {
+    const response = await fetch(`${baseUrl}/`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/html');
+    const html = await response.text();
+    // 127.0.0.1:<port> is not a listed host, so the page falls back to PUBLIC_BASE_URL.
+    expect(html).toContain('http://localhost:8080/mcp');
+    expect(html).toContain('href="http://localhost:8080/xray/?fixture=1"');
+    expect(html).toContain('xray_get_session_link');
+    expect(html).not.toContain('<script');
+  });
+
+  it('refuses to be framed', async () => {
+    const response = await fetch(`${baseUrl}/`);
+    expect(response.headers.get('x-frame-options')).toBe('DENY');
+    expect(response.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
+  });
+
+  it('prints the base URL of the listed host the visitor used (invariant 4)', async () => {
+    const hosted = createApp(
+      loadConfig({
+        ORIGIN_POLICY: 'log-only',
+        PUBLIC_BASE_URL: 'https://fallback.example',
+        PUBLIC_HOSTS: 'bank.example;fallback.example',
+      }),
+      { bootId: 'boot_host', version: '0.1.0-test' },
+    );
+    const hostedServer = hosted.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => hostedServer.once('listening', () => resolve()));
+    try {
+      const port = (hostedServer.address() as AddressInfo).port;
+      const listed = await (
+        await fetch(`http://127.0.0.1:${port}/`, { headers: { 'x-forwarded-host': 'bank.example' } })
+      ).text();
+      expect(listed).toContain('https://bank.example/mcp');
+      const unlisted = await (
+        await fetch(`http://127.0.0.1:${port}/`, { headers: { 'x-forwarded-host': 'evil.example' } })
+      ).text();
+      expect(unlisted).toContain('https://fallback.example/mcp');
+      expect(unlisted).not.toContain('evil.example');
+    } finally {
+      await new Promise<void>((resolve) => hostedServer.close(() => resolve()));
+    }
+  });
+});
+
 describe('unknown routes', () => {
   it('answers 404 with a JSON body', async () => {
     const response = await fetch(`${baseUrl}/nope`);

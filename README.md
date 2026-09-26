@@ -6,7 +6,7 @@ A public remote MCP server for a fictional bank, plus an X-ray dashboard that sh
 
 Every bank operation is mocked. Data is generated deterministically from a seed and lives in memory, with a per-grant SQLite scratch database for the Ramp-style "load, then SQL" pattern. The tool surface, scope model and OAuth shape follow Ramp's public MCP work; the observability layer is ours.
 
-**State (2026-09-26):** **deployed** on Cloud Run (service `mcp-bank`, project `lake-fraude`) by the GitHub Actions pipeline of https://github.com/frbarreto/glassbank on every push to `main`; live at **https://glassbank-mcp.abovethefog.app** (`/mcp`, `/xray`, `/health`; the `run.app` URL also answers). `npm run check` green, contracts v0.6. Next: real clients (Codex and ChatGPT connected earlier through a tunnel; no claude.ai account yet), then `ORIGIN_POLICY=allowlist`. See [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md).
+**State (2026-09-26):** **deployed** on Cloud Run (service `mcp-bank`, project `lake-fraude`) by the GitHub Actions pipeline of https://github.com/frbarreto/glassbank on every push to `main`; live at **https://glassbank-mcp.abovethefog.app**: the landing page at `/` gives the MCP URL (`/mcp`) and opens the dashboard (`/xray/`); `/health` for status; the `run.app` URL also answers. The repository is private; only the site is public. `npm run check` green, contracts v0.6. Next: real clients (Codex and ChatGPT connected earlier through a tunnel; no claude.ai account yet), then `ORIGIN_POLICY=allowlist`. See [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md).
 
 ## Try it
 
@@ -17,7 +17,7 @@ npm run login -- --write          # opens the mock login and consent pages, writ
 npm run e2e                       # 151 scripted checks: OAuth, read flow, write flow, step-up, dashboard API
 ```
 
-Open `http://localhost:8080/xray/?fixture=1` to see the dashboard replay a recorded session, or connect a real MCP client to `http://localhost:8080/mcp` and ask it for `xray_get_session_link`. [docs/LOCAL_TESTING.md](docs/LOCAL_TESTING.md) is the full walkthrough; [infra/local/cloudflared.md](infra/local/cloudflared.md) exposes the laptop to a remote client.
+Open `http://localhost:8080/` for the landing page, or `http://localhost:8080/xray/?fixture=1` to see the dashboard replay a recorded session, or connect a real MCP client to `http://localhost:8080/mcp` and ask it for `xray_get_session_link`. [docs/LOCAL_TESTING.md](docs/LOCAL_TESTING.md) is the full walkthrough; [infra/local/cloudflared.md](infra/local/cloudflared.md) exposes the laptop to a remote client.
 
 ## How it fits together
 

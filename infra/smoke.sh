@@ -25,7 +25,8 @@
 #      160.79.104.0/21 egress must not be locked out)
 #  10  the X-ray dashboard is actually shipped: /xray/ and /xray/app.js answer 200, and the JSON
 #      API under /xray/api answers 401 rather than 404 (the container used to carry no public/,
-#      so every tool call handed the user an xray_get_session_link URL that led to a 404)
+#      so every tool call handed the user an xray_get_session_link URL that led to a 404); and
+#      the landing page at / answers 200 and names <base>/mcp (a bare domain used to answer 404)
 #
 # Checks 1, 6 and 7 are skipped when the target is local (localhost / 127.0.0.1 / an http:// URL):
 # a laptop has no public A record and there is no Cloud Run service to describe.
@@ -543,6 +544,14 @@ check_dashboard() {
     200) fail "/xray/api/me -> 200 without a viewer cookie; the dashboard must never be public" ;;
     *) fail "/xray/api/me -> $code (expected 401 or 403)" ;;
   esac
+
+  # The landing page: what a person sees when they type the bare domain.
+  code="$(http GET "$BASE_URL/")"
+  if [ "$code" = "200" ] && grep -qF "$BASE_URL/mcp" "$BODY"; then
+    pass "/ -> 200, the landing page names $BASE_URL/mcp"
+  else
+    fail "/ -> $code; the landing page is missing or does not name $BASE_URL/mcp"
+  fi
 }
 
 # ---------------------------------------------------------------------------------------------

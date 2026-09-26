@@ -172,6 +172,14 @@ describe('mounting the blocks leaves the app routes intact', () => {
     });
   });
 
+  it('still answers the landing page at / (the auth router at the root does not shadow it)', async () => {
+    const response = await fetch(`${baseUrl}/`);
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain('http://127.0.0.1:8080/mcp');
+    expect(html).toContain('/xray/');
+  });
+
   it('still answers 404 for an unknown route', async () => {
     const response = await fetch(`${baseUrl}/no-such-route`);
     expect(response.status).toBe(404);

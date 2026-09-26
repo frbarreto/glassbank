@@ -1,7 +1,8 @@
 /**
  * Composition root (block: app).
  *
- * Builds the Express 5 application: `trust proxy`, a request id, JSON body parsing, `/health`,
+ * Builds the Express 5 application: `trust proxy`, a request id, JSON body parsing, `/health`, the
+ * landing page at `/`,
  * and the mount points every later block plugs into. It contains no domain logic and no global
  * mutable state; blocks are injected (docs/blocks/app.md, docs/REPO_LAYOUT.md section 3).
  *
@@ -15,6 +16,7 @@ import express from 'express';
 import type { Express, NextFunction, Request, RequestHandler, Response } from 'express';
 
 import type { AppConfig } from './config/index.js';
+import { canonicalBaseUrl } from './contracts/index.js';
 
 /** Everything the composition root injects. All optional while the blocks do not exist yet. */
 export interface AppDeps {
@@ -122,6 +124,86 @@ function statusOfError(error: unknown): number {
   return raw >= 400 && raw <= 499 ? raw : 500;
 }
 
+/** Escapes the five HTML metacharacters; the landing page interpolates only the base URL. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * The page a person sees at `/`: what this server is, the MCP URL to paste into a client, and the
+ * way into the X-ray dashboard. `base` is the canonical base URL for the host the visitor typed
+ * (`canonicalBaseUrl`, invariant 4), so the URL printed here is the PRM `resource` a client will
+ * be told. No script, no state, no form. English only.
+ */
+export function landingPageHtml(base: string): string {
+  const b = escapeHtml(base.replace(/\/+$/, ''));
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glass Bank</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f5f7f9; --fg: #16202b; --muted: #5b6b7a; --line: #d6dde5; --card: #ffffff; --accent: #0e6e6a; --code: #eef2f6; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0f151b; --fg: #e6edf3; --muted: #93a3b3; --line: #27333f; --card: #161e26; --accent: #5cc8c0; --code: #1c2630; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; padding: 0 16px 48px; }
+  main { max-width: 720px; margin: 0 auto; }
+  header { padding: 40px 0 8px; }
+  h1 { font-size: 34px; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 { font-size: 19px; margin: 0 0 10px; }
+  p { margin: 0 0 12px; }
+  .lede { color: var(--muted); font-size: 17px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px; margin: 18px 0; }
+  code { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+  .url { display: block; font-size: 16px; padding: 10px 12px; margin: 6px 0 14px; user-select: all; }
+  ol, ul { margin: 0 0 12px; padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  a { color: var(--accent); }
+  .button { display: inline-block; background: var(--accent); color: var(--bg); text-decoration: none; font-weight: 600; padding: 9px 16px; border-radius: 6px; margin: 4px 8px 4px 0; }
+  .button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  footer { color: var(--muted); font-size: 14px; margin-top: 24px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Glass Bank</h1>
+    <p class="lede">A fictional bank you can connect to any MCP client, with an X-ray view of everything the server sees. Every customer, card and transfer here is fake.</p>
+  </header>
+
+  <section aria-labelledby="connect">
+    <h2 id="connect">Connect an MCP client</h2>
+    <p>MCP server URL:</p>
+    <code class="url">${b}/mcp</code>
+    <ol>
+      <li><strong>claude.ai</strong>: Customize &gt; Connectors &gt; Add custom connector. Paste the URL above and leave the OAuth client fields empty. A mock bank login opens: pick a demo customer and approve the scopes.</li>
+      <li><strong>Claude Code</strong>: <code>claude mcp add --transport http glassbank ${b}/mcp</code>, then <code>/mcp</code> to log in.</li>
+      <li><strong>Other clients</strong> (Codex, MCP Inspector): Streamable HTTP with OAuth 2.1 and dynamic client registration, at the same URL.</li>
+    </ol>
+    <p>Opening <code>/mcp</code> in a browser answers 405: it speaks MCP over POST only.</p>
+  </section>
+
+  <section aria-labelledby="xray">
+    <h2 id="xray">Watch it from the inside</h2>
+    <p>The X-ray dashboard shows which tools were listed and called, with their arguments, rationale and results. Once a client is connected, ask it for the X-ray link (the <code>xray_get_session_link</code> tool) to watch your own session live.</p>
+    <p><a class="button" href="${b}/xray/?fixture=1">Replay a recorded session</a><a class="button secondary" href="${b}/xray/">Open the dashboard</a></p>
+  </section>
+
+  <footer>
+    <p>Server status: <a href="${b}/health">/health</a>.</p>
+  </footer>
+</main>
+</body>
+</html>
+`;
+}
+
 /** Builds the application. Pure: no listening, no timers, no process-level handlers. */
 export function createApp(config: AppConfig, deps: AppDeps = {}): Express {
   const bootId = deps.bootId ?? newBootId();
@@ -160,6 +242,29 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): Express {
       uptime_s: Math.round((Date.now() - startedAt) / 1000),
     };
     res.status(200).json(body);
+  });
+
+  // The landing page. Registered before the auth router, so nothing mounted at the root can shadow
+  // it. The host is picked the way `src/mcp/gate.ts` picks it (X-Forwarded-Host, then Host) and
+  // resolved by the contract's `canonicalBaseUrl`, so the MCP URL printed is the one the OAuth
+  // metadata of that host advertises (invariant 4). Framing is refused like every browser page.
+  app.get('/', (req: Request, res: Response) => {
+    const forwarded = req.headers['x-forwarded-host'];
+    const candidate = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+    const raw = (typeof candidate === 'string' && candidate.length > 0 ? candidate : req.headers.host) ?? null;
+    const host = raw === null ? null : (raw.split(',')[0]?.trim() ?? null);
+    const base = canonicalBaseUrl(host, config);
+    res
+      .status(200)
+      .set({
+        'cache-control': 'no-cache',
+        'x-frame-options': 'DENY',
+        'content-security-policy':
+          "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        'referrer-policy': 'no-referrer',
+      })
+      .type('html')
+      .send(landingPageHtml(base));
   });
 
   // --- MOUNT POINT: auth (block auth, T0.3 / L5) -----------------------------------------------

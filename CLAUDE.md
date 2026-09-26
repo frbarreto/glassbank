@@ -2,7 +2,7 @@
 
 A public remote MCP server for a fictional bank plus a live X-ray dashboard. Any MCP client (a claude.ai custom connector, Claude Code, Codex, MCP Inspector) connects over OAuth 2.1 with a mock login, uses Ramp-style tools (`load_*` -> `process_data` -> `execute_query` -> `clear_table`, two guarded write tools) and can watch everything the server observes at `/xray`. All bank data is fake and seeded deterministically. One npm package, TypeScript ESM, one Node process, one Cloud Run service pinned to one instance.
 
-**State (2026-09-26):** **deployed**. Cloud Run service `mcp-bank` in `lake-fraude`, deployed by `.github/workflows/pipeline.yml` on every push to `main` of https://github.com/frbarreto/glassbank (public, no branch protection, D-20 to D-25); live at `https://glassbank-mcp.abovethefog.app` (D-25; `mcp-bank-520283334162.us-central1.run.app` and Cloud Run's `mcp-bank-wdm7njj4pa-uc.a.run.app` also answer), `ORIGIN_POLICY=log-only`, contracts v0.6, uptime check and email alert on `/health`. Codex and ChatGPT connected earlier through a tunnel (`docs/observations/claude-ai.md`); no claude.ai client yet. Next steps (real clients, `allowlist`, the open X-ray redesign tasks): `docs/BUILD_PLAN.md`.
+**State (2026-09-26):** **deployed**. Cloud Run service `mcp-bank` in `lake-fraude`, deployed by `.github/workflows/pipeline.yml` on every push to `main` of https://github.com/frbarreto/glassbank (private, no branch protection, D-20 to D-25); live at `https://glassbank-mcp.abovethefog.app` (landing page at `/`, MCP at `/mcp`, dashboard at `/xray/`; D-25; `mcp-bank-520283334162.us-central1.run.app` and Cloud Run's `mcp-bank-wdm7njj4pa-uc.a.run.app` also answer), `ORIGIN_POLICY=log-only`, contracts v0.6, uptime check and email alert on `/health`. Codex and ChatGPT connected earlier through a tunnel (`docs/observations/claude-ai.md`); no claude.ai client yet. Next steps (real clients, `allowlist`, the open X-ray redesign tasks): `docs/BUILD_PLAN.md`.
 
 ## Documents (read only what the task needs)
 
@@ -44,7 +44,7 @@ npm run login [-- --write]    # OAuth handshake in the browser; writes .glass-ba
 npm run e2e                   # 55 + 96 checks against a real server: OAuth walk, then session walk
 npm run e2e:dashboard         # 28 checks: a real browser paired to a real session, ending in an erase (needs Chrome; boots dist/, so build first)
 npm run smoke:worker-sqlite   # 6/6: proves the SQL timeout mechanism of invariant 8
-bash infra/smoke.sh http://localhost:8080   # 23 pass / 0 fail / 3 skip with the default env
+bash infra/smoke.sh http://localhost:8080   # 24 pass / 0 fail / 3 skip with the default env
 node public/_dev/check-console.mjs          # the dashboard in headless Chrome over the fixture
 docker compose -f infra/local/docker-compose.yml up --build   # the shipped image
 cloudflared tunnel --url http://localhost:8080   # then restart with PUBLIC_BASE_URL = tunnel URL and PUBLIC_HOSTS = '<tunnel host>;localhost:8080'

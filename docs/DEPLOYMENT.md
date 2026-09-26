@@ -50,7 +50,7 @@ Steps, every one with `--project=lake-fraude --region=us-central1`:
 
 ## 4. Verify - `infra/smoke.sh [URL]` (`make smoke`)
 
-`./infra/smoke.sh` targets `status.url` (falling back to the deterministic URL); `bash infra/smoke.sh http://localhost:8080` targets a local server and gives 23 passed, 0 failed, 3 skipped (checks 1, 6 and 7 need public DNS or gcloud). It runs every check, prints the active Origin policy and exits 1 if any check failed. Knobs: `SMOKE_BASE_URL`, `SMOKE_HOSTS` (`;`- or space-separated), `CURL_TIMEOUT` (15 s), `DISCOVERY_BUDGET_S` (10), `REGISTER_ATTEMPTS` (30), `DRY_RUN=1`.
+`./infra/smoke.sh` targets `status.url` (falling back to the deterministic URL); `bash infra/smoke.sh http://localhost:8080` targets a local server and gives 24 passed, 0 failed, 3 skipped (checks 1, 6 and 7 need public DNS or gcloud). It runs every check, prints the active Origin policy and exits 1 if any check failed. Knobs: `SMOKE_BASE_URL`, `SMOKE_HOSTS` (`;`- or space-separated), `CURL_TIMEOUT` (15 s), `DISCOVERY_BUDGET_S` (10), `REGISTER_ATTEMPTS` (30), `DRY_RUN=1`.
 
 | # | Asserts |
 |---|---|
@@ -63,7 +63,7 @@ Steps, every one with `--project=lake-fraude --region=us-central1`:
 | 7 | `gcloud run services get-iam-policy` binds `allUsers` (public invoker, A-16). |
 | 8 | Each of the three discovery documents answers inside `DISCOVERY_BUDGET_S`. |
 | 9 | `REGISTER_ATTEMPTS` consecutive `POST /register` from one IP: no 429 and at least one success (A-43). |
-| 10 | `/xray/` and `/xray/app.js` answer 200; `/xray/api/me` answers 401 or 403, never 404 or 200 (invariant 11). |
+| 10 | `/xray/` and `/xray/app.js` answer 200; `/xray/api/me` answers 401 or 403, never 404 or 200 (invariant 11); `/` answers 200 and names `<base>/mcp`. |
 
 ## 5. Roll back
 
@@ -195,6 +195,7 @@ Parsed once in `src/config/index.ts` (zod; one `ConfigError` lists every problem
 
 ## 13. Adding the connector in claude.ai
 
+0. `https://glassbank-mcp.abovethefog.app/` is the landing page with the MCP URL and these steps in short; `/mcp` itself answers 405 in a browser (invariant 6).
 1. Customize > Connectors > Add custom connector. Name `Glass Bank`; URL exactly as `deploy.sh` printed it (`.../mcp`, no trailing slash); Authentication **Always required**; OAuth client **No client ID, register automatically** (DCR). Use an individual Free/Pro/Max account for the first test (A-34). Auth settings cannot be edited afterwards: remove and re-add instead.
 2. The popup is the mock login: pick a shared persona, paste a `per_` id, or **Create a demo customer**; it sets the 30-day `login_id` cookie.
 3. Consent lists the scopes: read scopes pre-checked, `cards:write` and `transfers:write` unchecked. A later 403 `insufficient_scope` re-opens consent, and the same browser extends the same grant (invariant 15).

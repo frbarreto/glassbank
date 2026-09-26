@@ -9,7 +9,7 @@ No domain logic; the only place that imports every block.
 ## Files
 | File | What it does |
 |---|---|
-| `src/app.ts` | `createApp(config, deps)`: `trust proxy` = 1, request id, `/health` (alias `/healthz`, which Cloud Run's front end never forwards; `XRAY_ROUTES.health`, contracts v0.6), the mount order below, JSON 404, the error handler. |
+| `src/app.ts` | `createApp(config, deps)`: `trust proxy` = 1, request id, `/health` (alias `/healthz`, which Cloud Run's front end never forwards; `XRAY_ROUTES.health`, contracts v0.6), the landing page at `/`, the mount order below, JSON 404, the error handler. |
 | `src/composition.ts` | `createGlassBank(config, options)`: bank-core -> auth -> xray -> etl -> tools -> mcp -> `createApp`; `shutdown()`. |
 | `src/server.ts` | Entry point: `loadConfig`, listen, a header-phase guard, SIGTERM/SIGINT, `unhandledRejection`, `uncaughtException`. |
 | `src/config/index.ts` | `loadConfig(env)`: every knob parsed once with zod and its default; one `ConfigError` listing every problem. |
@@ -17,11 +17,11 @@ No domain logic; the only place that imports every block.
 
 ## Public interface
 - `src/composition.ts`: `createGlassBank(config: AppConfig, options?: GlassBankOptions): GlassBank` = `{app, bootId, version, bankCore, auth, xray, etl, tools, mcp, shutdown(reason?)}`; `GlassBankOptions` = `{bootId?, version?, gitSha?, dashboardRoot?, quiet?}`; `dashboardRootFor(importMetaUrl)`; `SDK_VERSION`.
-- `src/app.ts`: `createApp(config, deps?: AppDeps): Express` with `AppDeps` = `{bootId?, version?, authRouter?, mcpRouter?, xrayRouter?, dashboardRoot?}`; `newBootId()`; `readPackageVersion()`; `HealthResponse`.
+- `src/app.ts`: `createApp(config, deps?: AppDeps): Express` with `AppDeps` = `{bootId?, version?, authRouter?, mcpRouter?, xrayRouter?, dashboardRoot?}`; `newBootId()`; `readPackageVersion()`; `HealthResponse`; `landingPageHtml(base)`.
 - `src/config/index.ts`: `loadConfig(env = process.env)`, `hasFeatureFlag(config, flag)`, `ENV_VARIABLE_NAMES` (exactly the `.env.example` list), `ConfigError`, `AppConfig`. `src/server.ts` exports nothing.
 
 ## Mount order (`src/app.ts`)
-1. `app.set('trust proxy', 1)` - the hop the proxy appended, never the caller's own header; `x-powered-by` off; `x-request-id` accepted and echoed; `GET /health` -> `{status: "ok", boot_id, version, origin_policy, uptime_s}`.
+1. `app.set('trust proxy', 1)` - the hop the proxy appended, never the caller's own header; `x-powered-by` off; `x-request-id` accepted and echoed; `GET /health` -> `{status: "ok", boot_id, version, origin_policy, uptime_s}`; `GET /` -> the landing page: the MCP URL for the host the visitor typed (`canonicalBaseUrl` over `X-Forwarded-Host`, then `Host`, as `src/mcp/gate.ts` does), how to connect claude.ai, Claude Code and other clients, links to `/xray/?fixture=1` and `/xray/`; no script, `X-Frame-Options: DENY`, `frame-ancestors 'none'`. Registered before `authRouter`, so the root mount cannot shadow it.
 2. `authRouter` at `/` (`/.well-known/*`, `/authorize`, `/login`, `/consent`, `/token`, `/register`, `/revoke`), then `mcpRouter` at `/mcp`; only then `express.json` and `urlencoded` at 1 mb, so each router keeps its own limit (256 kb and 4 mb).
 3. `xrayRouter` at `/xray`, then `express.static(public/)` at `/xray` behind it (`_dev/` and `__tests__/` -> 404; `.html` and `.jsonl` sent `no-cache`; the `public/fixtures` symlink serves `?fixture=1`); the placeholder page only when neither is injected.
 4. JSON 404; the error handler keeps the error's own 4xx (`413` over the limit, `400` bad JSON) and answers 5xx with a fixed body.
@@ -49,7 +49,7 @@ None. `server.started` and `server.stopping` are emitted by `src/xray/index.ts`;
 
 ## How to test
 ```
-npx vitest run src/__tests__ src/config        # 37 tests, 3 files: config parsing, /health, trust proxy, error handler, the mount order
+npx vitest run src/__tests__ src/config        # config parsing, /health, the landing page, trust proxy, error handler, the mount order
 npx vitest run test/import-boundaries.test.ts  # 5 tests: the block dependency rules, parsed from source
 npm run build && node dist/server.js           # the entry point the container runs
 ```

@@ -23,7 +23,7 @@ Two logical micro-apps share one process and one origin (ADR-6): **mcp-server** 
 | auth | `src/auth/` | Hand-rolled OAuth 2.1 authorization server and verifier: RFC 8414 and 9728 metadata, DCR persisted to `AUTH_DB_PATH`, `/authorize` -> `/login` -> `/consent` pages on a `txn` JWT, `/token`, `/revoke`, rate limits, `verifyAccessToken`. | `auth.*` (server side) |
 | xray | `src/xray/` | Emitter, redaction, ring buffer, SQLite WAL log at `XRAY_DB_PATH`, read model, SSE stream, pairing codes, viewer cookie; serves `/xray/s/:code` and `/xray/api/*`. | `xray.*`, `server.*` |
 | dashboard | `public/` | Vanilla-JS SPA (flat files, `panel-*.js`): `EventSource` client with reconnect, panels over a reducer, `?fixture=1` replay of `test/fixtures/events.jsonl`. Talks HTTP only. | none |
-| app | `src/app.ts`, `src/composition.ts`, `src/server.ts`, `src/config/` | Express 5 app, `trust proxy`, request id, `/health`, mount order, env parsing, wiring by injection, SIGTERM handler. | none |
+| app | `src/app.ts`, `src/composition.ts`, `src/server.ts`, `src/config/` | Express 5 app, `trust proxy`, request id, `/health`, the landing page at `/`, mount order, env parsing, wiring by injection, SIGTERM handler. | none |
 | infra | `infra/` | `Dockerfile`, `cloudbuild.yaml`, `bootstrap.sh`, `deploy.sh` (the only place gcloud flags live), `smoke.sh`, `local/` (compose, tunnel notes), `vm/` (documented alternative). | none |
 
 ## 3. Tech stack

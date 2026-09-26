@@ -52,7 +52,7 @@ None.
 DRY_RUN=1 ./infra/deploy.sh                    # exit 0: prints the build, deploy and correction commands, creates nothing
 DRY_RUN=1 ./infra/bootstrap.sh                 # prints every gcloud command
 DRY_RUN=1 ./infra/smoke.sh                     # resolves the target and exits 0 without a request
-bash infra/smoke.sh http://localhost:8080      # against a running server: 23 passed, 0 failed, 3 skipped
+bash infra/smoke.sh http://localhost:8080      # against a running server: 24 passed, 0 failed, 3 skipped
 bash infra/smoke.sh https://<tunnel-host>      # 24 passed, 5 failed: all five are the undeployed Cloud Run service (infra/local/cloudflared.md)
 docker compose -f infra/local/docker-compose.yml up --build   # the shipped image, NODE_ENV=production
 DRY_RUN=1 ./infra/ci-bootstrap.sh              # prints the deployer service account commands

@@ -180,7 +180,7 @@ removes its profile).
 
 ```bash
 docker compose -f infra/local/docker-compose.yml up --build   # infra/Dockerfile, NODE_ENV=production, port ${HOST_PORT:-8080}
-bash infra/smoke.sh http://localhost:8080                     # 23 passed, 0 failed, 3 skipped (checks 1, 6, 7 need public DNS or gcloud)
+bash infra/smoke.sh http://localhost:8080                     # 24 passed, 0 failed, 3 skipped (checks 1, 6, 7 need public DNS or gcloud)
 docker compose -f infra/local/docker-compose.yml down -v      # also drops the SQLite files on the mcp-bank-data volume
 ```
 

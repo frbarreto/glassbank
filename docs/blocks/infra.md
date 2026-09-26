@@ -15,6 +15,7 @@ The gcloud flags live in `deploy.sh` and nowhere else.
 | `infra/ci-bootstrap.sh` | One-time (D-24): the deployer service account `mcp-bank-deployer` that GitHub Actions impersonates through the existing Workload Identity pool `github-pool`: `artifactregistry.writer` on the `lake-fraude` repository, `run.admin` on the project, `serviceAccountUser` on `mcp-bank-run`, `workloadIdentityUser` for `principalSet://.../attribute.repository/frbarreto/glassbank`; retries bindings through IAM propagation; prints the GitHub variables to set; idempotent; `DRY_RUN=1`. Ran for real on 2026-09-26. |
 | `.github/workflows/pipeline.yml` | GitHub Actions (D-22 to D-24, `docs/DEPLOYMENT.md` section 15): `check`, `e2e`, `image` (build, boot, local smoke, SIGTERM exit check, push `mcp-bank:<sha12>` on `main`), `deploy` (`SKIP_BUILD=1 ./infra/deploy.sh`, then `smoke.sh`, job summary). Push to `main` deploys; `pull_request` never; `workflow_dispatch` redeploys an `image_tag` and sets `origin_policy`. Keyless through `mcp-bank-deployer`. |
 | `infra/domain.sh` | D-25: `gcloud beta run domain-mappings create` for `DOMAIN` (default `glassbank-mcp.abovethefog.app`) in `lake-fraude`, then the one CNAME record in Cloud DNS zone `abovethefog-app` (project `abovethefog`); refuses the apex and `www`; `status` prints certificate provisioning; `DRY_RUN=1`. |
+| `infra/observe.sh` | Email notification channel, uptime check `glass-bank-health` on `/health` every 5 minutes, alert policy after 10 minutes of failures (`docs/DEPLOYMENT.md` section 17); idempotent; `DRY_RUN=1`. Ran for real on 2026-09-26. |
 | `infra/pause.sh` | `pause` deletes the service (stops the bill); `resume` redeploys the newest Artifact Registry image (or `RESUME_TAG`) through `deploy.sh`; `make pause` / `make resume`; `DRY_RUN=1`. |
 | `infra/deploy.sh` | Cloud Build into Artifact Registry `lake-fraude`, `gcloud run deploy` with the canonical flags, then the `status.url` / `PUBLIC_HOSTS` correction. |
 | `infra/smoke.sh [BASE_URL]` | Ten checks: DNS, no cross-host redirect, the 401 challenge, discovery on every host, `/health`, Cloud Run invariants, public IAM, discovery latency, 30x `/register` without a 429, dashboard served. |
@@ -56,6 +57,8 @@ bash infra/smoke.sh https://<tunnel-host>      # 24 passed, 5 failed: all five a
 docker compose -f infra/local/docker-compose.yml up --build   # the shipped image, NODE_ENV=production
 DRY_RUN=1 ./infra/ci-bootstrap.sh              # prints the deployer service account commands
 DRY_RUN=1 ./infra/pause.sh pause               # prints the delete; `resume` prints the redeploy of the newest image
+DRY_RUN=1 ./infra/domain.sh                    # prints the mapping and the CNAME commands; `status` prints the certificate state
+DRY_RUN=1 ./infra/observe.sh                   # prints the channel, uptime check and alert policy commands
 ruby -ryaml -e 'YAML.load_file(".github/workflows/pipeline.yml")'   # the workflow parses
 git push origin main                           # runs the pipeline: check, e2e, image, deploy + smoke; follow with `gh run watch`
 ```

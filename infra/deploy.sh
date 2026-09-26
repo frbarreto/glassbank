@@ -156,6 +156,10 @@ preflight() {
   resolve_tag
 
   IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}/${SERVICE}:${IMAGE_TAG}"
+  # An explicit PUBLIC_BASE_URL (the custom hostname, docs/DEPLOYMENT.md section 16) is kept as the
+  # canonical base; only the default is replaced by status.url in correct_public_hosts (A-36).
+  PUBLIC_BASE_URL_EXPLICIT=0
+  [ -n "${PUBLIC_BASE_URL:-}" ] && PUBLIC_BASE_URL_EXPLICIT=1
   PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-$DETERMINISTIC_URL}"
   PUBLIC_HOSTS="${PUBLIC_HOSTS:-$DETERMINISTIC_HOST}"
   PUBLIC_HOSTS="$(append_host "$PUBLIC_HOSTS" "${PUBLIC_BASE_URL#https://}")"
@@ -230,9 +234,9 @@ deploy() {
 # status.url correction
 #
 # The PRM `resource` must equal what a user types. Cloud Run reports the hostname it actually
-# serves in status.url; if that is not the deterministic form, add it to PUBLIC_HOSTS and make it
-# the fallback base URL. Claude caches discovery documents for about five minutes per URL, so a
-# mismatch here is sticky (A-36).
+# serves in status.url; if that is not the deterministic form, add it to PUBLIC_HOSTS and, unless
+# PUBLIC_BASE_URL was set explicitly (the custom hostname), make it the fallback base URL. Claude
+# caches discovery documents for about five minutes per URL, so a mismatch here is sticky (A-36).
 # ---------------------------------------------------------------------------------------------
 correct_public_hosts() {
   step "PUBLIC_HOSTS / status.url correction"
@@ -240,9 +244,15 @@ correct_public_hosts() {
   if [ "$DRY_RUN" = "1" ]; then
     show_cmd gcloud run services describe "$SERVICE" --project="$PROJECT_ID" \
       --region="$REGION" --format='value(status.url)'
-    say "# then, only if status.url differs from PUBLIC_BASE_URL ($PUBLIC_BASE_URL):"
-    show_cmd gcloud run services update "$SERVICE" --project="$PROJECT_ID" --region="$REGION" \
-      --update-env-vars="PUBLIC_BASE_URL=<status.url>,PUBLIC_HOSTS=$PUBLIC_HOSTS;<status.host>"
+    if [ "$PUBLIC_BASE_URL_EXPLICIT" = "1" ]; then
+      say "# then, only if status.host is missing from PUBLIC_HOSTS (PUBLIC_BASE_URL is explicit and kept):"
+      show_cmd gcloud run services update "$SERVICE" --project="$PROJECT_ID" --region="$REGION" \
+        --update-env-vars="PUBLIC_BASE_URL=$PUBLIC_BASE_URL,PUBLIC_HOSTS=$PUBLIC_HOSTS;<status.host>"
+    else
+      say "# then, only if status.url differs from PUBLIC_BASE_URL ($PUBLIC_BASE_URL):"
+      show_cmd gcloud run services update "$SERVICE" --project="$PROJECT_ID" --region="$REGION" \
+        --update-env-vars="PUBLIC_BASE_URL=<status.url>,PUBLIC_HOSTS=$PUBLIC_HOSTS;<status.host>"
+    fi
     STATUS_URL="$PUBLIC_BASE_URL"
     return 0
   fi
@@ -253,19 +263,24 @@ correct_public_hosts() {
   local status_host="${STATUS_URL#https://}"
   say "status.url       : $STATUS_URL"
 
-  local wanted_hosts
+  local wanted_hosts wanted_base
   wanted_hosts="$(append_host "$PUBLIC_HOSTS" "$status_host")"
+  wanted_base="$STATUS_URL"
+  if [ "$PUBLIC_BASE_URL_EXPLICIT" = "1" ]; then
+    wanted_base="$PUBLIC_BASE_URL"
+    say "PUBLIC_BASE_URL was set explicitly; keeping $wanted_base as the canonical base."
+  fi
 
-  if [ "$STATUS_URL" = "$PUBLIC_BASE_URL" ] && [ "$wanted_hosts" = "$PUBLIC_HOSTS" ]; then
+  if [ "$wanted_base" = "$PUBLIC_BASE_URL" ] && [ "$wanted_hosts" = "$PUBLIC_HOSTS" ]; then
     say "no correction needed."
     return 0
   fi
 
-  say "correcting PUBLIC_BASE_URL -> $STATUS_URL and PUBLIC_HOSTS -> $wanted_hosts"
+  say "correcting PUBLIC_BASE_URL -> $wanted_base and PUBLIC_HOSTS -> $wanted_hosts"
   run gcloud run services update "$SERVICE" \
     --project="$PROJECT_ID" --region="$REGION" \
-    --update-env-vars="PUBLIC_BASE_URL=$STATUS_URL,PUBLIC_HOSTS=$wanted_hosts"
-  PUBLIC_BASE_URL="$STATUS_URL"
+    --update-env-vars="PUBLIC_BASE_URL=$wanted_base,PUBLIC_HOSTS=$wanted_hosts"
+  PUBLIC_BASE_URL="$wanted_base"
   PUBLIC_HOSTS="$wanted_hosts"
 }
 

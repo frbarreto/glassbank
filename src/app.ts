@@ -16,7 +16,7 @@ import express from 'express';
 import type { Express, NextFunction, Request, RequestHandler, Response } from 'express';
 
 import type { AppConfig } from './config/index.js';
-import { PUBLIC_MCP_PATH, canonicalBaseUrl } from './contracts/index.js';
+import { PUBLIC_MCP_PATH, canonicalBaseUrl, keepRawBody } from './contracts/index.js';
 
 /** Everything the composition root injects. All optional while the blocks do not exist yet. */
 export interface AppDeps {
@@ -41,6 +41,11 @@ export interface AppDeps {
    * test that only wires `auth` and `mcp` still answers something at `/xray`.
    */
   readonly dashboardRoot?: string;
+  /**
+   * v0.9 (D-28): the catch-all `http.request` producer (`McpHandle.httpObserver`), mounted in front
+   * of every route so no request escapes the record, discovery and OAuth included.
+   */
+  readonly httpObserver?: RequestHandler;
 }
 
 /** What `/health` answers. Field names are snake_case because they are a wire contract. */
@@ -247,6 +252,10 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): Express {
 
   app.use(requestIdMiddleware());
 
+  // Before every route, `/health` and the landing page included: each request that reaches the
+  // process is reported once, with its `raw` block (v0.9, D-28). It only listens; it never answers.
+  if (deps.httpObserver) app.use(deps.httpObserver);
+
   // /health is the public name. On Cloud Run, Google's front end answers /healthz itself with a
   // 404 and never forwards it (observed on the first deploy, 2026-09-26); /healthz stays as an alias
   // for local tooling (compose health checks, e2e scripts). Contract: XRAY_ROUTES.health, v0.6.
@@ -302,8 +311,8 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): Express {
   // parser with its own limit (256 kb and 4 mb), and body-parser skips a request whose body has
   // already been read. A global parser in front of them made both of those dead code and put one
   // 1 mb limit on everything. These two are the fallback for every route that declares none.
-  app.use(express.json({ limit: '1mb' }));
-  app.use(express.urlencoded({ extended: false, limit: '1mb' }));
+  app.use(express.json({ limit: '1mb', verify: keepRawBody }));
+  app.use(express.urlencoded({ extended: false, limit: '1mb', verify: keepRawBody }));
 
   // --- MOUNT POINT: xray + dashboard (blocks xray and dashboard, L6 / L7) ----------------------
   // The X-ray router claims exactly `/xray/s/:code` and `/xray/api/*` (XRAY_ROUTES); it answers

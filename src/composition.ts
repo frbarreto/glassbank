@@ -399,6 +399,7 @@ export function createGlassBank(config: AppConfig, options: GlassBankOptions = {
           },
         }
       : {}),
+    captureSkipPaths: config.xrayCaptureSkipPaths,
     ...(quiet ? { log: () => undefined } : {}),
   });
 
@@ -410,6 +411,7 @@ export function createGlassBank(config: AppConfig, options: GlassBankOptions = {
     authRouter: auth.router,
     mcpRouter: mcp,
     ...(mcp.publicLane === null ? {} : { publicMcpRouter: mcp.publicLane }),
+    httpObserver: mcp.httpObserver,
     xrayRouter: xray.router,
     dashboardRoot: options.dashboardRoot ?? dashboardRootFor(import.meta.url),
   });

@@ -845,13 +845,29 @@ describe('http.request', () => {
   });
 });
 
-describe('invariant 7: no token value ever reaches an event', () => {
-  it('emits nothing containing the bearer token', async () => {
+describe('invariant 7: a token reaches the log only as the raw request carried it (D-28)', () => {
+  it('keeps the Authorization header verbatim in `raw` and nowhere else', async () => {
     const harness = await harnessWith();
     const token = tokenFor(READ_ONLY_SCOPES, 'grt_secret');
     await harness.rpc(initializeFrame(1), { token });
     await harness.rpc(callFrame('get_current_user', { rationale: 'who am i' }, 2), { token });
-    const serialised = JSON.stringify(harness.xray.events);
+
+    // The record: the header exactly as sent, on every request that carried it.
+    const requests = harness.xray.events.filter((event) => event.type === 'http.request');
+    expect(requests.length).toBeGreaterThan(0);
+    for (const request of requests) {
+      const headers = (request.data as { raw?: { headers: [string, string][] } }).raw?.headers ?? [];
+      expect(headers.find(([name]) => name.toLowerCase() === 'authorization')?.[1]).toBe(
+        `Bearer ${token}`,
+      );
+    }
+
+    // Every categorised field: no token value, whoever produced it. The viewer surfaces hide the
+    // raw header too (src/xray/redaction.ts, `viewEvent`).
+    const withoutRaw = harness.xray.events.map((event) =>
+      event.type === 'http.request' ? { ...event, data: { ...event.data, raw: undefined } } : event,
+    );
+    const serialised = JSON.stringify(withoutRaw);
     expect(serialised).not.toContain('mockbank_user_tok_');
     expect(serialised).not.toContain(token);
   });

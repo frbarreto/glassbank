@@ -204,8 +204,8 @@ describe('id conventions (docs/REPO_LAYOUT.md section 8)', () => {
   });
 });
 
-describe('the strict schema is what the emitter should validate against', () => {
-  it('drops a data key the contract does not document', () => {
+describe('the schemas are open: nothing a producer sends is dropped (v0.9, D-28)', () => {
+  it('keeps a data key the contract does not document, at any depth', () => {
     const parsed = XrayEventSchema.parse({
       ...MINIMAL,
       type: 'etl.load',
@@ -214,9 +214,68 @@ describe('the strict schema is what the emitter should validate against', () => 
         rows: 1,
         source_tool: 'load_cards',
         duration_ms: 1,
-        undocumented: 'gone',
+        undocumented: { nested: ['kept'] },
       },
     });
-    expect(parsed.data).not.toHaveProperty('undocumented');
+    expect(parsed.data).toHaveProperty('undocumented', { nested: ['kept'] });
+    // The categorised keys stay the documented ones; the rest is the unmapped remainder.
+    expect(dataKeysOf('etl.load')).not.toContain('undocumented');
+  });
+
+  it('keeps an envelope key the contract does not document', () => {
+    const parsed = XrayEventSchema.parse({ ...MINIMAL, envelope_extra: 42 }) as Record<string, unknown>;
+    expect(parsed.envelope_extra).toBe(42);
+  });
+
+  it('keeps unknown keys inside nested catalogue objects', () => {
+    const parsed = XrayEventSchema.parse({
+      ...MINIMAL,
+      type: 'tool.call.completed',
+      data: {
+        tool: 'load_cards',
+        duration_ms: 1,
+        is_error: true,
+        error: { message: 'boom', class: 'tool', vendor_detail: 'x' },
+      },
+    });
+    expect(parsed.type === 'tool.call.completed' && parsed.data.error).toMatchObject({
+      vendor_detail: 'x',
+    });
+  });
+
+  it('carries the raw request on http.request, headers as ordered pairs', () => {
+    const parsed = XrayEventSchema.parse({
+      ...MINIMAL,
+      type: 'http.request',
+      data: {
+        method: 'POST',
+        path: '/mcp',
+        status: 200,
+        duration_ms: 3,
+        raw: {
+          method: 'POST',
+          url: '/mcp',
+          headers: [
+            ['Signature-Agent', '"https://chatgpt.com"'],
+            ['X-Dup', 'a'],
+            ['X-Dup', 'b'],
+          ],
+          body: '{"jsonrpc":"2.0"}',
+          body_encoding: 'utf8',
+          body_bytes: 17,
+          body_read: true,
+          something_new: true,
+        },
+      },
+    });
+    expect(parsed.type === 'http.request' && parsed.data.raw).toMatchObject({
+      headers: [
+        ['Signature-Agent', '"https://chatgpt.com"'],
+        ['X-Dup', 'a'],
+        ['X-Dup', 'b'],
+      ],
+      something_new: true,
+      trailers: [],
+    });
   });
 });

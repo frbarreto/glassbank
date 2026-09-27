@@ -1,28 +1,34 @@
 /**
  * The redaction pipeline (block: xray).
  *
- * Implements docs/XRAY_EVENT_MODEL.md section 3 verbatim. Every event passes through
- * `redactEventData` on its way into the ring buffer and the log; nothing else in the process is
- * allowed to write an event without it (CLAUDE.md invariant 11, "don't bypass the redaction
- * pipeline").
+ * Implements docs/XRAY_EVENT_MODEL.md section 3. Since v0.9 (D-28) it runs **on the way out**,
+ * never on the way in: the log keeps every event exactly as its producer emitted it - the `raw`
+ * block of `http.request` with every header and the body bytes included - and each viewer surface
+ * (the SSE stream, the session page, a pairing or public-lane export) passes the stored event
+ * through `viewEvent` before it leaves the process. The operator's admin export is the one surface
+ * that returns the log as stored (D-27).
  *
  * The default is **verbatim**. All the bank data is fake and the brief asks the dashboard to show
  * "with which arguments", so this is a deny-list, never an allow-list:
  *
- *   - tokens, codes, verifiers and viewer JWTs never enter the log, by key name and by pattern;
+ *   - tokens, codes, verifiers and viewer JWTs are hidden, by key name, by header name and by
+ *     pattern;
  *   - account and card numbers are masked to the last four;
- *   - tool arguments are stored as the model wrote them except the per-tool deny-list from
- *     `src/contracts/tools.ts` plus `GLOBAL_REDACTION_PATTERNS`;
- *   - `remote_ip` is reduced to a `/24` prefix and the `anthropic_egress` flag;
- *   - `rationale` and SQL are stored verbatim (they are the product);
- *   - results are truncated to a 2 KB preview;
- *   - observer mode (`applyObserverRedaction`, applied at read time) hides arguments entirely and
- *     masks the rationale to 80 characters.
+ *   - tool arguments are shown as the model wrote them except the per-tool deny-list from
+ *     `src/contracts/tools.ts` plus `GLOBAL_REDACTION_PATTERNS`, in the categorised event and in
+ *     the raw JSON-RPC body alike;
+ *   - an IP address, in `remote_ip`, the socket peer or a forwarding header, is shown as its `/24`
+ *     (`/48`) prefix only (invariant 11);
+ *   - `rationale` and SQL are shown verbatim (they are the product);
+ *   - results are previewed at 2 KB, strings at 16 KB, one event at 64 K characters;
+ *   - observer mode (`applyObserverRedaction`) also hides arguments entirely, in the raw body too,
+ *     and masks the rationale to 80 characters.
  *
  * Pure functions, no I/O: this file is what the unit tests of `__tests__/redaction.test.ts`
  * pin down.
  */
 import { createHash } from 'node:crypto';
+import { isIP } from 'node:net';
 
 import {
   ANTHROPIC_EGRESS_CIDR,
@@ -31,6 +37,7 @@ import {
   REDACTED_PLACEHOLDER,
   RESULT_PREVIEW_BYTES,
   getTool,
+  type ViewerKind,
   type XrayEvent,
   type XrayEventType,
 } from '../contracts/index.js';
@@ -131,6 +138,9 @@ export const SENSITIVE_KEY_FRAGMENTS: readonly string[] = [
  * still caught by the fragments above.
  */
 export const SENSITIVE_KEY_EXCEPTIONS: ReadonlySet<string> = new Set([
+  // MCP's `_meta.progressToken` is a correlation handle the client picks, not a credential.
+  'progresstoken',
+  'progress_token',
   'token_type',
   'token_endpoint',
   'token_endpoint_auth_method',
@@ -451,6 +461,207 @@ function truncateStructured(value: unknown): unknown {
   return { truncated: true, preview: serialised.slice(0, RESULT_PREVIEW_BYTES) };
 }
 
+// ---------------------------------------------------------------------------
+// The raw request (`http.request.data.raw`, v0.9, D-28)
+// ---------------------------------------------------------------------------
+
+/** Headers whose value carries a caller address; each address is cut to its prefix. */
+export const IP_HEADERS: ReadonlySet<string> = new Set([
+  'x_forwarded_for',
+  'forwarded',
+  'x_real_ip',
+  'true_client_ip',
+  'cf_connecting_ip',
+  'x_client_ip',
+  'x_cluster_client_ip',
+  'fastly_client_ip',
+  'x_original_forwarded_for',
+  'x_envoy_external_address',
+  'client_ip',
+]);
+
+/** Every IPv4 or IPv6 address inside a header value, replaced by its `/24` or `/48` prefix. */
+export function prefixAddressesIn(value: string): string {
+  return value.replace(/[0-9A-Fa-f:.]{2,}/g, (candidate) => {
+    const bare = /^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/.exec(candidate)?.[1] ?? candidate;
+    return isIP(bare) === 0 ? candidate : (ipPrefixOf(bare) ?? candidate);
+  });
+}
+
+/** An OAuth token request carries the authorization code as a bare top-level `code`. */
+function isTokenRequest(value: Record<string, unknown>): boolean {
+  return typeof value.grant_type === 'string';
+}
+
+/** One JSON-RPC message of a raw body: the per-tool deny-list reaches `params.arguments`. */
+function walkJsonRpcMessage(
+  message: unknown,
+  path: string,
+  state: WalkState,
+): unknown {
+  if (message === null || typeof message !== 'object' || Array.isArray(message)) {
+    return walk(message, path, 1, { denyKeys: new Set(), maskIdentifiers: false }, state);
+  }
+  const frame = message as Record<string, unknown>;
+  const params = frame.params;
+  if (
+    frame.method === 'tools/call' &&
+    params !== null &&
+    typeof params === 'object' &&
+    !Array.isArray(params)
+  ) {
+    const { arguments: args, ...otherParams } = params as Record<string, unknown>;
+    const denyKeys = denyKeysForTool((params as Record<string, unknown>).name);
+    const walkedParams = walk(
+      otherParams,
+      `${path}.params`,
+      2,
+      { denyKeys: new Set(), maskIdentifiers: false },
+      state,
+    ) as Record<string, unknown>;
+    const walkedArgs = walk(args ?? {}, `${path}.params.arguments`, 3, { denyKeys, maskIdentifiers: false }, state);
+    const { params: _params, ...rest } = frame;
+    const walkedRest = walk(rest, path, 1, { denyKeys: new Set(), maskIdentifiers: false }, state) as Record<
+      string,
+      unknown
+    >;
+    return { ...walkedRest, params: { ...walkedParams, arguments: walkedArgs } };
+  }
+  const denyKeys: ReadonlySet<string> = isTokenRequest(frame) ? new Set(['code']) : new Set();
+  return walk(frame, path, 1, { denyKeys, maskIdentifiers: false }, state);
+}
+
+/** The content type a raw request declared, lower-cased, parameters dropped. */
+function contentTypeOf(headers: readonly (readonly [string, string])[]): string {
+  const header = headers.find(([name]) => name.toLowerCase() === 'content-type');
+  return (header?.[1] ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+}
+
+/** A form body or a query string with every sensitive parameter hidden. */
+function redactSearchParams(source: string, path: string, state: WalkState): string {
+  const params = new URLSearchParams(source);
+  const tokenRequest = params.has('grant_type');
+  let changed = false;
+  for (const key of [...new Set(params.keys())]) {
+    const folded = normaliseKey(key);
+    if (isSensitiveKey(folded) || (tokenRequest && folded === 'code')) {
+      params.set(key, REDACTED_PLACEHOLDER);
+      record(state, `${path}.${key}`);
+      changed = true;
+    }
+  }
+  const output = changed ? params.toString() : source;
+  return redactString(output, path, state);
+}
+
+/**
+ * What a viewer is shown of the `raw` block. The stored block is never changed: this builds a
+ * copy with credentials hidden, addresses cut to their prefix and the body walked like the
+ * categorised fields, so the raw view never shows what the categorised view hides.
+ */
+export function redactRawRequest(raw: unknown, state: WalkState = freshState()): unknown {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    return walk(raw, 'raw', 1, { denyKeys: new Set(), maskIdentifiers: false }, state);
+  }
+  const source = raw as Record<string, unknown>;
+  const output: Record<string, unknown> = {};
+  const headers: [string, string][] = Array.isArray(source.headers)
+    ? (source.headers as unknown[]).filter(
+        (pair): pair is [string, string] =>
+          Array.isArray(pair) && typeof pair[0] === 'string' && typeof pair[1] === 'string',
+      )
+    : [];
+
+  const redactHeaders = (pairs: [string, string][], path: string): [string, string][] =>
+    pairs.map(([name, value], index) => {
+      const folded = normaliseKey(name);
+      const at = `${path}[${index}]`;
+      if (isSensitiveKey(folded)) {
+        record(state, at);
+        return [name, REDACTED_PLACEHOLDER];
+      }
+      if (IP_HEADERS.has(folded)) {
+        const prefixed = prefixAddressesIn(value);
+        if (prefixed !== value) record(state, at);
+        return [name, prefixed];
+      }
+      return [name, redactString(value, at, state)];
+    });
+
+  for (const [key, value] of Object.entries(source)) {
+    if (key === 'headers') {
+      output.headers = redactHeaders(headers, 'raw.headers');
+    } else if (key === 'trailers') {
+      output.trailers = Array.isArray(value)
+        ? redactHeaders(
+            (value as unknown[]).filter(
+              (pair): pair is [string, string] =>
+                Array.isArray(pair) && typeof pair[0] === 'string' && typeof pair[1] === 'string',
+            ),
+            'raw.trailers',
+          )
+        : [];
+    } else if (key === 'remote_address') {
+      const prefix = typeof value === 'string' ? ipPrefixOf(value) : null;
+      if (typeof value === 'string' && prefix !== value) record(state, 'raw.remote_address');
+      output.remote_address = prefix;
+    } else if (key === 'url' && typeof value === 'string') {
+      const queryAt = value.indexOf('?');
+      output.url =
+        queryAt < 0
+          ? redactString(value, 'raw.url', state)
+          : `${value.slice(0, queryAt)}?${redactSearchParams(value.slice(queryAt + 1), 'raw.url', state)}`;
+    } else if (key === 'body' && typeof value === 'string' && source.body_encoding === 'utf8') {
+      const contentType = contentTypeOf(headers);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(value) as unknown;
+      } catch {
+        parsed = undefined;
+      }
+      if (parsed !== undefined && typeof parsed === 'object' && parsed !== null) {
+        const walked = Array.isArray(parsed)
+          ? parsed.map((message, index) => walkJsonRpcMessage(message, `raw.body[${index}]`, state))
+          : walkJsonRpcMessage(parsed, 'raw.body', state);
+        output.body = JSON.stringify(walked);
+      } else if (contentType === 'application/x-www-form-urlencoded') {
+        output.body = redactSearchParams(value, 'raw.body', state);
+      } else {
+        output.body = redactString(value, 'raw.body', state);
+      }
+    } else {
+      output[key] = walk(value, `raw.${key}`, 1, { denyKeys: new Set(), maskIdentifiers: false }, state);
+    }
+  }
+  return output;
+}
+
+/** Observer mode inside a raw body: every `tools/call` keeps its name and loses its arguments. */
+function hideRawArguments(raw: unknown): { raw: unknown; hidden: boolean } {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return { raw, hidden: false };
+  const source = raw as Record<string, unknown>;
+  if (typeof source.body !== 'string') return { raw, hidden: false };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source.body);
+  } catch {
+    return { raw, hidden: false };
+  }
+  let hidden = false;
+  const strip = (message: unknown): unknown => {
+    if (message === null || typeof message !== 'object' || Array.isArray(message)) return message;
+    const frame = message as Record<string, unknown>;
+    const params = frame.params;
+    if (frame.method !== 'tools/call' || params === null || typeof params !== 'object') {
+      return message;
+    }
+    hidden = true;
+    return { ...frame, params: { ...(params as Record<string, unknown>), arguments: {} } };
+  };
+  const stripped = Array.isArray(parsed) ? parsed.map(strip) : strip(parsed);
+  return hidden ? { raw: { ...source, body: JSON.stringify(stripped) }, hidden } : { raw, hidden };
+}
+
 export interface RedactionResult {
   readonly data: Record<string, unknown>;
   /** Dotted paths inside `data` that the pipeline changed. */
@@ -538,6 +749,19 @@ export function redactEventData(type: XrayEventType | string, data: unknown): Re
     delete source.remote_ip;
     source.remote_ip_prefix = ipPrefixOf(rawIp);
     source.anthropic_egress = egress;
+    if (source.raw !== undefined) {
+      // Its own budget, like `arguments`: a large body must not squeeze out the categorised
+      // fields. Taken out here and put back after the generic walk, so it is walked once.
+      const rawState: WalkState = freshState();
+      const raw = redactRawRequest(source.raw, rawState);
+      delete source.raw;
+      const walked = walk(source, '', 0, { denyKeys: new Set(), maskIdentifiers: true }, state) as Record<
+        string,
+        unknown
+      >;
+      const fields = [...new Set([...state.redacted, ...rawState.redacted])];
+      return { data: { ...walked, raw }, redacted_fields: fields };
+    }
   }
 
   if (type === 'tool.call.completed') {
@@ -581,6 +805,10 @@ function toStringArray(value: unknown): string[] {
  * the same stored event also serves the pairing viewer who owns the login.
  */
 export function applyObserverRedaction(event: XrayEvent): XrayEvent {
+  if (event.type === 'http.request' && event.data.raw !== undefined) {
+    const { raw, hidden } = hideRawArguments(event.data.raw);
+    return hidden ? ({ ...event, data: { ...event.data, raw } } as XrayEvent) : event;
+  }
   if (event.type === 'tool.call.started') {
     const rationale = event.data.rationale;
     const masked =
@@ -613,4 +841,28 @@ export function applyObserverRedaction(event: XrayEvent): XrayEvent {
     };
   }
   return event;
+}
+
+// ---------------------------------------------------------------------------
+// The way out (v0.9, D-28)
+// ---------------------------------------------------------------------------
+
+/** One stored event, as each kind of viewer is shown it; the live fan-out renders it once. */
+const views = new WeakMap<object, Partial<Record<ViewerKind, XrayEvent>>>();
+
+/**
+ * What a viewer surface shows of a stored event: the deny-list redaction of section 3, and for an
+ * admin (observer mode, D-5) the harder masking on top. The stored event is never modified; the
+ * admin export is the one reader that skips this (D-27).
+ */
+export function viewEvent(event: XrayEvent, viewerKind: ViewerKind): XrayEvent {
+  const cached = views.get(event)?.[viewerKind];
+  if (cached) return cached;
+  const redacted = redactEventData(event.type, event.data);
+  let view = { ...event, data: redacted.data } as XrayEvent;
+  if (viewerKind === 'admin') view = applyObserverRedaction(view);
+  const entry = views.get(event) ?? {};
+  entry[viewerKind] = view;
+  views.set(event, entry);
+  return view;
 }

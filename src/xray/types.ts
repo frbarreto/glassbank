@@ -15,6 +15,11 @@ export interface XrayConfig {
   readonly xrayRetentionHours: number;
   /** Hard row cap on the event log; retention by time alone is not a memory bound. */
   readonly xrayMaxLogRows: number;
+  /**
+   * v0.9 (D-28): byte cap on the event log (`XRAY_MAX_LOG_BYTES`). Events are stored whole, so
+   * this, not truncation, is what bounds memory. Defaults to `DEFAULT_MAX_LOG_BYTES`.
+   */
+  readonly xrayMaxLogBytes?: number;
   /** Observer mode is off entirely when this is undefined (Decision D-5). */
   readonly xrayAdminToken: string | undefined;
   readonly rateLimits: {

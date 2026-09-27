@@ -8,10 +8,13 @@
  */
 import type { NextFunction, Request, RequestHandler, Response, Router } from 'express';
 
-import type {
-  XrayCorrelation,
-  XrayEmitter,
-  XrayEventDataInput,
+import {
+  captureRawRequest,
+  isHttpObserved,
+  markHttpObserved,
+  type XrayCorrelation,
+  type XrayEmitter,
+  type XrayEventDataInput,
 } from '../contracts/index.js';
 
 import { BoundedSessionMap } from './bounded-map.js';
@@ -140,6 +143,9 @@ export function httpRequestFacts(
     content_type: request.get('content-type') ?? null,
     sse: outcome.sse,
     rate_limited: outcome.rateLimited,
+    // v0.9 (D-28): the request as it arrived, every header and the body bytes included. The
+    // fields above are the categorised view of it; this is the record.
+    raw: captureRawRequest(request),
   };
 }
 
@@ -166,6 +172,7 @@ export function createMethodNotAllowed(deps: HttpObserverDeps): RequestHandler {
   return (request: Request, response: Response) => {
     const startedAt = deps.now().getTime();
     deps.observed.add(response);
+    markHttpObserved(response);
     deps.applyCors(request, response);
     response.setHeader('Allow', 'POST');
     deps.log({
@@ -219,6 +226,7 @@ export function createParseErrorObserver(
       return;
     }
     deps.observed.add(response);
+    markHttpObserved(response);
     const startedAt = deps.now().getTime();
     const correlation = deps.correlationOf?.(request);
     const message = error instanceof Error ? error.message : 'the request body could not be read';
@@ -246,5 +254,58 @@ export function createParseErrorObserver(
       );
     });
     next(error);
+  };
+}
+
+export interface HttpObserverOptions {
+  readonly config: McpHttpConfig;
+  readonly now: () => Date;
+  readonly xray: XrayEmitter;
+  /**
+   * Path prefixes left out (`XRAY_CAPTURE_SKIP_PATHS`): the dashboard's own traffic under `/xray`,
+   * whose events would stream back to the viewer that caused them, and the uptime check's
+   * `/health`. A prefix matches itself and everything below it.
+   */
+  readonly skipPaths: readonly string[];
+}
+
+/**
+ * v0.9 (D-28): one `http.request` for every request no MCP endpoint reports itself.
+ *
+ * Mounted by the app in front of every router, so discovery (`/.well-known/*`), dynamic client
+ * registration, `/authorize`, `/token`, the login and consent pages, `/` and every 404 are on the
+ * record with the same categorised facts and the same `raw` block as `/mcp`. A response `/mcp` or
+ * `/public/mcp` already reports (`markHttpObserved`) is skipped, so each request is reported once.
+ * These requests have no grant yet, so they carry no correlation: the admin view shows them.
+ */
+export function createHttpObserver(options: HttpObserverOptions): RequestHandler {
+  const skipped = (path: string): boolean =>
+    options.skipPaths.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+
+  return (request: Request, response: Response, next: NextFunction) => {
+    if (skipped(request.path)) {
+      next();
+      return;
+    }
+    const startedAt = options.now().getTime();
+    let reported = false;
+    const report = (): void => {
+      if (reported || isHttpObserved(response)) return;
+      reported = true;
+      const contentType = String(response.getHeader('content-type') ?? '');
+      options.xray.emit(
+        'http.request',
+        httpRequestFacts(request, options.config, {
+          status: response.statusCode,
+          durationMs: Math.max(0, options.now().getTime() - startedAt),
+          sse: contentType.includes('text/event-stream'),
+          rateLimited: response.statusCode === 429,
+        }),
+      );
+    };
+    // `close` also covers a caller that hung up before the answer was complete.
+    response.on('finish', report);
+    response.on('close', report);
+    next();
   };
 }

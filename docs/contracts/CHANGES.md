@@ -1,6 +1,16 @@
 # Contract change log
 
-Version log for `src/contracts` (`auth.ts`, `bank.ts`, `events.ts`, `scopes.ts`, `tools.ts`, `xray-api.ts`, `public.ts`, re-exported by `index.ts`), newest first. The contract is append-only: names are added, never renamed or removed in v1. Namespaces: `A-xx` assumption and `D-x` user decision (`docs/ASSUMPTIONS.md`), `ADR-x` architecture decision (`docs/ARCHITECTURE.md` section 9).
+Version log for `src/contracts` (`auth.ts`, `bank.ts`, `events.ts`, `scopes.ts`, `tools.ts`, `xray-api.ts`, `public.ts`, `raw-http.ts`, re-exported by `index.ts`), newest first. The contract is append-only: names are added, never renamed or removed in v1. Namespaces: `A-xx` assumption and `D-x` user decision (`docs/ASSUMPTIONS.md`), `ADR-x` architecture decision (`docs/ARCHITECTURE.md` section 9).
+
+## v0.9 - 2026-09-27 - the raw record
+
+| Change | File | Producer / consumer |
+|---|---|---|
+| Every schema is open: `z.object` became `z.looseObject` in all 52 schemas (the envelope, every `data`, every nested object). A field the catalogue does not name is kept, not stripped | `events.ts` | `xray` stores it; the dashboard lists it as "unmapped" (`public/unmapped.js`, `public/contract-keys.js`) |
+| `RawHeaderSchema`, `RawHttpRequestSchema` `{method, url, http_version, headers: [name, value][], trailers, body, body_encoding: utf8 / base64, body_bytes, body_read, remote_address, remote_port}` and the optional `raw` on `HttpRequestData` | `events.ts` | `mcp` fills it on every `http.request`; `xray` stores it as is and redacts it for viewers; `public/raw-request.js` draws it |
+| `keepRawBody` (a body-parser `verify` hook), `rawBodyOf`, `captureRawRequest`, `markHttpObserved`, `isHttpObserved`, `HTTP_OBSERVED_LOCAL` | `raw-http.ts` (new) | every body parser (`app`, `auth`, `mcp`) keeps the bytes; `mcp` builds the block and marks the responses it reports |
+
+Why: D-28. The audit of 2026-09-27 found that `http.request` kept 15 fixed fields and the emitter's schema dropped the rest, so the Web Bot Auth headers (`Signature`, `Signature-Input`, `Signature-Agent`), every other header, the JSON-RPC method of notifications and `ping`, the `_meta` of anything but `tools/call`, the full DCR metadata and every request outside `/mcp` (discovery, `/register`, `/token`, 404s) never reached the log. Now every request is recorded once with its `raw` block, the emitter stores what it is given (no redaction, no truncation on the way in; `XRAY_MAX_LOG_BYTES` drops the oldest whole events instead), and the viewer surfaces redact on the way out. Additive: no name renamed or removed; a consumer that ignored unknown keys is unaffected.
 
 ## v0.8 - 2026-09-26 - the export
 

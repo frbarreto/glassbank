@@ -28,6 +28,8 @@ import {
   ClientInfoSchema,
   TOOL_CATALOG,
   getTool,
+  keepRawBody,
+  markHttpObserved,
   normaliseFeatureFlags,
   parseScopeString,
   resourceMetadataUrl,
@@ -56,6 +58,7 @@ import {
   summariseJsonRpc,
 } from './gate.js';
 import {
+  createHttpObserver,
   createMcpCors,
   createMethodNotAllowed,
   createParseErrorObserver,
@@ -120,6 +123,11 @@ export interface McpDeps {
     /** `RATE_LIMIT_PUBLIC_TOOL_CALLS`. */
     readonly toolCallsPerMin: number;
   };
+  /**
+   * v0.9 (D-28): `XRAY_CAPTURE_SKIP_PATHS`, the path prefixes `McpHandle.httpObserver` leaves out.
+   * Defaults to none.
+   */
+  readonly captureSkipPaths?: readonly string[];
 }
 
 /**
@@ -138,6 +146,11 @@ export interface McpHandle {
   sessions: SessionManager;
   /** The sign-in-free endpoint (D-26), or `null` when it is switched off. */
   publicLane: PublicLaneHandler | null;
+  /**
+   * v0.9 (D-28): the catch-all `http.request` producer `src/app.ts` mounts in front of every
+   * router, for the requests neither MCP endpoint reports (`createHttpObserver`, `http.ts`).
+   */
+  httpObserver: RequestHandler;
   stats(): {
     sessions: number;
     callsInFlight: number;
@@ -284,7 +297,8 @@ export function createMcp(deps: McpDeps): McpHandler {
   sweepTimer?.unref();
 
   const router: Router = express.Router();
-  router.use(express.json({ limit: '4mb' }));
+  // `keepRawBody` keeps the bytes for the `raw` block of `http.request` (v0.9, D-28).
+  router.use(express.json({ limit: '4mb', verify: keepRawBody }));
 
   /** Requests whose `http.request` has already been arranged, so it is emitted exactly once. */
   const observed = new WeakSet<Response>();
@@ -326,7 +340,12 @@ export function createMcp(deps: McpDeps): McpHandler {
     let correlation: XrayCorrelation = { request_id: requestId, trace_id: summary.traceparent };
 
     observed.add(response);
-    response.on('finish', () => {
+    markHttpObserved(response);
+    // Once, on `finish` or on a `close` that came first (the caller hung up mid-answer).
+    let reported = false;
+    const report = (): void => {
+      if (reported) return;
+      reported = true;
       const status = response.statusCode;
       const durationMs = Math.max(0, now().getTime() - startedAt);
       const contentType = String(response.getHeader('content-type') ?? '');
@@ -371,7 +390,9 @@ export function createMcp(deps: McpDeps): McpHandler {
         }),
         correlation,
       );
-    });
+    };
+    response.on('finish', report);
+    response.on('close', report);
 
     if (!originDecision.allowed) {
       xray.emit(
@@ -621,6 +642,12 @@ export function createMcp(deps: McpDeps): McpHandler {
   handle.sweep = sweep;
   handle.sessions = sessions;
   handle.publicLane = publicLane;
+  handle.httpObserver = createHttpObserver({
+    config,
+    now,
+    xray,
+    skipPaths: deps.captureSkipPaths ?? [],
+  });
   handle.stats = () => ({
     sessions: sessions.size,
     callsInFlight: inFlight.size,

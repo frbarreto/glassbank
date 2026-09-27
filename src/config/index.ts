@@ -134,6 +134,10 @@ const schema = z.object({
   XRAY_DB_PATH: strVar('/tmp/xray.sqlite'),
   XRAY_RETENTION_HOURS: intVar(72, 1, 24 * 365),
   XRAY_MAX_LOG_ROWS: intVar(200_000, 100, 100_000_000),
+  // v0.9 (D-28): events are stored whole, so the log is bounded by bytes as well as by rows.
+  XRAY_MAX_LOG_BYTES: intVar(256 * 1024 * 1024, 1024 * 1024, 64 * 1024 * 1024 * 1024),
+  // Path prefixes the catch-all `http.request` leaves out; `none` captures every path.
+  XRAY_CAPTURE_SKIP_PATHS: listVar('/xray;/health;/healthz'),
   XS_IDLE_GAP_MINUTES: intVar(15, 1, 1440),
   XRAY_MAX_STREAMS_PER_LOGIN: intVar(4, 1, 10_000),
   XRAY_MAX_STREAMS: intVar(64, 1, 100_000),
@@ -242,6 +246,8 @@ export function loadConfig(env: RawEnv = process.env): AppConfig {
     xrayDbPath: parsed.XRAY_DB_PATH,
     xrayRetentionHours: parsed.XRAY_RETENTION_HOURS,
     xrayMaxLogRows: parsed.XRAY_MAX_LOG_ROWS,
+    xrayMaxLogBytes: parsed.XRAY_MAX_LOG_BYTES,
+    xrayCaptureSkipPaths: parsed.XRAY_CAPTURE_SKIP_PATHS.filter((path) => path !== 'none'),
     xsIdleGapMinutes: parsed.XS_IDLE_GAP_MINUTES,
     xrayMaxStreamsPerLogin: parsed.XRAY_MAX_STREAMS_PER_LOGIN,
     xrayMaxStreams: parsed.XRAY_MAX_STREAMS,

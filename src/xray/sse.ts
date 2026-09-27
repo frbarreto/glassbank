@@ -35,7 +35,7 @@ import {
 import type { Pipeline } from './emitter.js';
 import type { EventLog, LogFilter } from './log.js';
 import type { ReadModel } from './read-model.js';
-import { applyObserverRedaction } from './redaction.js';
+import { viewEvent } from './redaction.js';
 import type { Ring } from './ring.js';
 
 /** Frames a subscriber may fall behind by before it starts losing them. */
@@ -166,7 +166,6 @@ export function openSseStream(options: SseStreamOptions): SseStream {
   const maxQueue = options.maxQueue ?? MAX_SUBSCRIBER_QUEUE;
   const maxQueueBytes = options.maxQueueBytes ?? MAX_SUBSCRIBER_QUEUE_BYTES;
   const startedAt = now().getTime();
-  const isObserver = scope.viewer_kind === 'admin';
 
   const queue: XrayEvent[] = [];
   /** Approximate characters currently queued, kept in step with `queue` on both ends. */
@@ -193,7 +192,8 @@ export function openSseStream(options: SseStreamOptions): SseStream {
   }
 
   function writeEvent(event: XrayEvent): void {
-    const rendered = isObserver ? applyObserverRedaction(event) : event;
+    // v0.9 (D-28): the log holds the event as it arrived; every viewer is shown the redacted view.
+    const rendered = viewEvent(event, scope.viewer_kind);
     writeRaw(renderStreamFrame({ event: SSE_EVENT_NAME, id: event.id, data: rendered }));
     lastSentId = Math.max(lastSentId, event.id);
   }

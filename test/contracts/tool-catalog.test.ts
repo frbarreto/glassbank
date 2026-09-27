@@ -337,15 +337,19 @@ describe('publishedToolDescriptor (contracts v0.5)', () => {
     }
   });
 
-  it('produces a descriptor CatalogToolDescriptorSchema accepts, minus name and title', () => {
+  it('produces a descriptor CatalogToolDescriptorSchema accepts, keeping even what it does not name', () => {
     for (const entry of TOOL_CATALOG) {
       const parsed = CatalogToolDescriptorSchema.safeParse(publishedToolDescriptor(entry));
       expect(parsed.success, entry.name).toBe(true);
+      // v0.9 (D-28): the schema is open, so `name` and `title` survive a parse; the catalog row
+      // builder (`catalogRowsOf`, src/mcp/xray.ts) is what leaves them out of `descriptor`.
       expect(Object.keys(parsed.data ?? {}).sort(), entry.name).toEqual([
         '_meta',
         'annotations',
         'description',
         'inputSchema',
+        'name',
+        'title',
       ]);
     }
   });

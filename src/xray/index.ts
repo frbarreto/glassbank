@@ -44,6 +44,9 @@ export {
 
 /** How many events are read back from the log to rebuild the read model on boot. */
 export const RESTORE_WINDOW = 5000;
+/** `XRAY_MAX_LOG_BYTES` when the config leaves it out: 256 MiB of the instance's 1 GiB. */
+export const DEFAULT_MAX_LOG_BYTES = 256 * 1024 * 1024;
+
 /** How often the retention job runs. */
 export const RETENTION_INTERVAL_MS = 10 * 60 * 1000;
 
@@ -114,6 +117,7 @@ export function createXray(deps: XrayDeps): Xray {
   const startedAtMs = now().getTime();
 
   const log = createEventLog({ path: config.xrayDbPath, onError });
+  const maxLogBytes = config.xrayMaxLogBytes ?? DEFAULT_MAX_LOG_BYTES;
   const ring = createRing();
   const readModel = createReadModel({ lookupEvent: (id) => log.readById(id) });
 
@@ -140,6 +144,7 @@ export function createXray(deps: XrayDeps): Xray {
     firstId: restoredMaxId,
     restoredSeq: log.seqByXs(),
     onError,
+    maxLogBytes,
   });
 
   const pairing: XrayPairing = createPairing({
@@ -174,6 +179,8 @@ export function createXray(deps: XrayDeps): Xray {
     // Time is not a memory bound on its own: one busy hour can hold more than the instance has
     // long before the 72-hour cutoff comes round, so the row cap trims too (invariant 14).
     removed += log.trimToMaxRows(config.xrayMaxLogRows);
+    // v0.9 (D-28): events are stored whole, so bytes are a bound of their own.
+    removed += log.trimToMaxBytes(maxLogBytes);
     // And deleting rows never shrinks the file by itself; on gen2 `/tmp` that is RAM (A-25).
     if (removed > 0) log.reclaim();
     return removed;

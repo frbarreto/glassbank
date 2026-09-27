@@ -126,7 +126,8 @@ Every cap and rate limit is an env var (section 11; invariant 14), but `deploy.s
 | Memory climbing, many personas | `MAX_MATERIALISED_PERSONAS`, `MAX_PERSONA_OVERLAYS`, `PERSONA_OVERLAY_TTL_HOURS` | 200, 1000, 24 | down |
 | Model queries time out too often | `QUERY_TIMEOUT_MS` | 2000 | up, carefully - CPU on a shared singleton |
 | Results truncated too aggressively | `MAX_QUERY_ROWS` | 100 | up, carefully - rows land in the model's context |
-| Event log growing | `XRAY_RETENTION_HOURS`, `XRAY_MAX_LOG_ROWS` | 72, 200000 | down |
+| Event log growing | `XRAY_RETENTION_HOURS`, `XRAY_MAX_LOG_ROWS`, `XRAY_MAX_LOG_BYTES` | 72, 200000, 268435456 (256 MiB) | down |
+| Uptime checks or dashboard traffic flooding the log | `XRAY_CAPTURE_SKIP_PATHS` | `/xray;/health;/healthz` | add prefixes; `none` records every path |
 | Registration table growing | `MAX_DCR_CLIENTS` | 1000 | down |
 | Dashboard streams refused with 429 | `XRAY_MAX_STREAMS_PER_LOGIN`, `XRAY_MAX_STREAMS`, `XRAY_MAX_PUBLIC_STREAMS` | 4, 64, 16 | up, inside `--concurrency=250`; the public one stays well under `XRAY_MAX_STREAMS` so paired viewers keep room |
 
@@ -167,6 +168,8 @@ Parsed once in `src/config/index.ts` (zod; one `ConfigError` lists every problem
 | `XRAY_DB_PATH` * | `/tmp/xray.sqlite` | event-log SQLite file (WAL); `/tmp` is memory-backed on Cloud Run |
 | `XRAY_RETENTION_HOURS` | `72` | events older than this are deleted |
 | `XRAY_MAX_LOG_ROWS` | `200000` | hard row cap on the event log |
+| `XRAY_MAX_LOG_BYTES` | `268435456` | byte cap on the event log (D-28): events are stored whole, so past it the oldest whole events go, after every write batch |
+| `XRAY_CAPTURE_SKIP_PATHS` | `/xray;/health;/healthz` | path prefixes the catch-all `http.request` observer leaves out; `none` records every path (D-28) |
 | `XS_IDLE_GAP_MINUTES` | `15` | silence after which a grant's next request starts a new X-ray session `xs` |
 | `XRAY_MAX_STREAMS_PER_LOGIN` | `4` | concurrent dashboard SSE streams per login (then 429 + `Retry-After`) |
 | `XRAY_MAX_STREAMS` | `64` | concurrent dashboard SSE streams per process |
@@ -250,10 +253,10 @@ Two places record what the MCP did:
 
 | Where | What | How long |
 |---|---|---|
-| The X-ray log: SQLite at `XRAY_DB_PATH` (`/tmp/xray.sqlite`) plus the last 10,000 events in memory | Every event: HTTP requests, sessions, `tools/list`, each call with its arguments and `rationale`, the `bank.*`, `etl.*` and `sql.*` it caused, results previewed at 2,048 chars, OAuth, pairing. Secrets never stored, IPs as a prefix. | 72 h or 200,000 rows (`XRAY_RETENTION_HOURS`, `XRAY_MAX_LOG_ROWS`), and on Cloud Run `/tmp` is memory: gone on every restart, push to `main` and `make pause` |
+| The X-ray log: SQLite at `XRAY_DB_PATH` (`/tmp/xray.sqlite`) plus the last 10,000 events in memory | Every event as it was emitted (D-28): every HTTP request on every path but `XRAY_CAPTURE_SKIP_PATHS`, each with its `raw` block (all headers in arrival order - Web Bot Auth's `Signature`, `Signature-Input`, `Signature-Agent` included - the body bytes and the socket peer), sessions, `tools/list`, each call with its arguments and `rationale`, the `bank.*`, `etl.*` and `sql.*` it caused, results previewed at 2,048 chars, OAuth, pairing. Stored raw: bearer tokens, cookies and full IP addresses are in it; the dashboard shows them redacted, the admin export does not. | 72 h, 200,000 rows or 256 MiB (`XRAY_RETENTION_HOURS`, `XRAY_MAX_LOG_ROWS`, `XRAY_MAX_LOG_BYTES`), and on Cloud Run `/tmp` is memory: gone on every restart, push to `main` and `make pause` |
 | stdout, collected by Cloud Logging | One JSON line per `/mcp` and `/public/mcp` request (`event: "http.request"`): method, path, status, duration, User-Agent, IP prefix, Origin, JSON-RPC methods, tool names, `clientInfo`, `grant_id`, `xs`. No arguments, no rationale. | 30 days (the `_Default` bucket); survives restarts and pauses |
 
-`GET /xray/api/export` (D-27, contracts v0.8) downloads the X-ray log as JSONL: one event per line, oldest first, verbatim, in the line format of `test/fixtures/events.jsonl`. Scopes: `?lane=public` needs no credential; a pairing cookie gets its own login; the admin token, as a cookie or as `Authorization: Bearer`, gets everything. `?after=<id>` returns only newer events, `?xs=<id>` one session. The dashboard's Sessions panel has the same download as "Download log (JSONL)".
+`GET /xray/api/export` (D-27, contracts v0.8) downloads the X-ray log as JSONL: one event per line, oldest first, in the line format of `test/fixtures/events.jsonl`; for the admin token the log exactly as stored, raw requests included (treat the file as a secret: it holds live bearer tokens), for any other reader the dashboard's redacted view (D-28). Scopes: `?lane=public` needs no credential; a pairing cookie gets its own login; the admin token, as a cookie or as `Authorization: Bearer`, gets everything. `?after=<id>` returns only newer events, `?xs=<id>` one session. The dashboard's Sessions panel has the same download as "Download log (JSONL)".
 
 ```
 make xray-export                                     # the live log, everything; the token comes from Secret Manager

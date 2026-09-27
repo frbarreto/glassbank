@@ -53,6 +53,13 @@ export interface AppConfig {
   readonly xrayRetentionHours: number;
   /** Hard row cap on the X-ray event log, alongside the time-based retention. */
   readonly xrayMaxLogRows: number;
+  /**
+   * v0.9 (D-28): byte cap on the event log. Events are stored whole, never truncated, so the
+   * oldest whole events go first when the log outgrows it.
+   */
+  readonly xrayMaxLogBytes: number;
+  /** v0.9 (D-28): path prefixes the catch-all `http.request` observer leaves out. */
+  readonly xrayCaptureSkipPaths: readonly string[];
   readonly xsIdleGapMinutes: number;
   /** Concurrent SSE streams one login may hold open on the dashboard. */
   readonly xrayMaxStreamsPerLogin: number;

@@ -29,6 +29,7 @@ import {
   isAcceptableAudience,
   isAllowedRedirectUri,
   isId,
+  keepRawBody,
   issuerUrl,
   normaliseFeatureFlags,
   parseScopeString,
@@ -263,8 +264,12 @@ export function buildAuthRouter(runtime: AuthRuntime): Router {
     OAUTH_ROUTES.token,
     OAUTH_ROUTES.revoke,
   ];
-  router.use(BODY_PARSED_ROUTES, express.json({ limit: '256kb' }));
-  router.use(BODY_PARSED_ROUTES, express.urlencoded({ extended: false, limit: '256kb' }));
+  // `keepRawBody` keeps the bytes as sent for the `raw` block of `http.request` (v0.9, D-28).
+  router.use(BODY_PARSED_ROUTES, express.json({ limit: '256kb', verify: keepRawBody }));
+  router.use(
+    BODY_PARSED_ROUTES,
+    express.urlencoded({ extended: false, limit: '256kb', verify: keepRawBody }),
+  );
 
   function log(event: string, request: Request, extra: Record<string, unknown> = {}): void {
     runtime.log({

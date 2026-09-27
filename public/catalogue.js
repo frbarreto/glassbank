@@ -10,6 +10,7 @@
  * Pure functions. No DOM.
  */
 import { charCount, clip, count, duration, joinList, oneLineSql } from './format.js';
+import { webBotAuthOf } from './raw-headers.js';
 
 /** The twelve families of docs/XRAY_EVENT_MODEL.md section 3, plus `other` for the unknown. */
 export const FAMILIES = [
@@ -265,7 +266,7 @@ export function summaryOf(event) {
         data.duration_ms,
       )}${data.sse ? ' · stream' : ''}${data.rate_limited ? ' · rate limited' : ''}${
         data.origin_decision === 'rejected' ? ' · origin rejected' : ''
-      }`;
+      }${webBotAuthOf(data.raw) ? ' · signed (Web Bot Auth)' : ''}`;
     case 'auth.challenge':
       return `${data.status ?? 401} with scope hint "${clip(data.scope, 60)}"${
         data.error ? ` · ${data.error}` : ''

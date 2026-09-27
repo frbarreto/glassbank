@@ -14,6 +14,7 @@ import { PUBLIC_LANE, PUBLIC_LOGIN_ID, routes } from '../api.js';
 import { DEFAULT_BUDGET_MS, DEFAULT_CONTENT_CAP } from '../store.js';
 import { PAIRING_CODE_ALPHABET, PAIRING_CODE_PATTERN } from '../pairing.js';
 import { MAX_ROWS } from '../panel-timeline.js';
+import { DATA_KEYS, ENVELOPE_KEYS } from '../contract-keys.js';
 import { CONTRACT_AUTH_PATH, CONTRACT_EVENTS_PATH } from './helpers.mjs';
 
 const eventsSource = readFileSync(CONTRACT_EVENTS_PATH, 'utf8');
@@ -42,6 +43,38 @@ describe('the event catalogue', () => {
     const contractTypes = new Set(contractEventTypes());
     const extra = KNOWN_TYPES.filter((type) => !contractTypes.has(type));
     expect(extra).toEqual([]);
+  });
+});
+
+/** The top-level keys of every `z.looseObject({...})` schema in events.ts, by constant name. */
+function contractSchemaKeys() {
+  const schemas = new Map();
+  for (const match of eventsSource.matchAll(/(?:export )?const (\w+) = z\.looseObject\(\{\n([\s\S]*?)\n\}\);/g)) {
+    const keys = [];
+    for (const line of match[2].split('\n')) {
+      // Exactly two spaces deep: a field of this schema, not of an object nested inside it.
+      const key = /^ {2}(?:'([^']+)'|([A-Za-z_]\w*)):/.exec(line);
+      if (key) keys.push(key[1] ?? key[2]);
+    }
+    schemas.set(match[1], keys);
+  }
+  return schemas;
+}
+
+describe('the mapped keys (contracts v0.9, D-28)', () => {
+  const schemas = contractSchemaKeys();
+
+  it('names exactly the data keys each event type declares', () => {
+    const fromContract = {};
+    for (const match of eventsSource.matchAll(/\bevent\(\s*'([a-z]+(?:\.[a-z_]+){1,2})',\s*(\w+),?\s*\)/g)) {
+      fromContract[match[1]] = schemas.get(match[2]);
+    }
+    expect(Object.keys(fromContract).length).toBeGreaterThan(40);
+    expect(DATA_KEYS).toEqual(fromContract);
+  });
+
+  it('names exactly the envelope keys', () => {
+    expect([...ENVELOPE_KEYS].sort()).toEqual([...schemas.get('EnvelopeBase'), 'type', 'data'].sort());
   });
 });
 

@@ -7,12 +7,17 @@
  *   1. **It never throws.** Every step is inside a `try`. A redaction bug, a malformed payload, a
  *      broken SQLite file or a dead subscriber socket must not be able to fail a `tools/call` or
  *      an OAuth request (CLAUDE.md invariants 5 and 13, docs/ARCHITECTURE.md section 6).
- *   2. **It never blocks the producer.** The synchronous part is: assign an id, redact, validate,
+ *   2. **It never blocks the producer.** The synchronous part is: assign an id, snapshot, validate,
  *      push into the ring, hand the frame to each matching subscriber, append to a bounded queue.
  *      The SQLite write is batched on `setImmediate`; the only synchronous flush is `flush()`,
  *      which a *viewer* request (a replay) or shutdown calls, never a producer.
  *   3. **Ids are monotonic and continue across a restart.** `restored_max_id + 1` on boot, and a
  *      per-`xs` `seq` restored the same way (docs/XRAY_EVENT_MODEL.md section 2).
+ *   4. **It stores what it is given** (v0.9, D-28). No redaction, no truncation and no field
+ *      dropped on the way in: the catalogue's schemas are open, so validation only fills the
+ *      documented defaults. Redaction runs on the way out (`viewEvent`, `redaction.ts`), and the
+ *      memory bound is `XRAY_MAX_LOG_BYTES`, which drops the oldest whole events, never a part
+ *      of a new one.
  *
  * On overflow of the write queue the events stay live (they are already in the ring and already
  * fanned out) and only durability is lost; the drop is counted and reported as `xray.dropped`.
@@ -32,7 +37,6 @@ import {
 import { BoundedLru } from './bounded.js';
 import type { EventLog } from './log.js';
 import type { ReadModel } from './read-model.js';
-import { redactEventData } from './redaction.js';
 import type { Ring } from './ring.js';
 
 /** Events waiting to be written to SQLite before the oldest are dropped. */
@@ -75,6 +79,31 @@ export interface PipelineOptions {
   readonly restoredSeq?: Map<string, number>;
   readonly onError?: (error: unknown, where: string) => void;
   readonly maxPendingWrites?: number;
+  /** `XRAY_MAX_LOG_BYTES`: past it, a flush trims the oldest whole events (v0.9, D-28). */
+  readonly maxLogBytes?: number;
+}
+
+/**
+ * A deep copy of a payload at the moment it is emitted. `structuredClone` keeps every value and
+ * survives cycles; a payload it refuses (a function inside) falls back to its JSON form, which is
+ * what the log stores anyway.
+ */
+function snapshot(data: unknown): unknown {
+  try {
+    return structuredClone(data);
+  } catch {
+    const seen = new WeakSet<object>();
+    return JSON.parse(
+      JSON.stringify(data, (_key, value: unknown) => {
+        if (typeof value === 'bigint') return value.toString();
+        if (value !== null && typeof value === 'object') {
+          if (seen.has(value)) return '[circular]';
+          seen.add(value);
+        }
+        return value;
+      }) ?? 'null',
+    ) as unknown;
+  }
 }
 
 export function createPipeline(options: PipelineOptions): Pipeline {
@@ -109,6 +138,11 @@ export function createPipeline(options: PipelineOptions): Pipeline {
     pending = [];
     try {
       log.append(batch);
+      // Events are stored whole, so the byte cap is enforced here and not only by the periodic
+      // retention: a burst of large bodies must not outgrow the instance's memory in between.
+      if (options.maxLogBytes !== undefined && log.storedBytes() > options.maxLogBytes) {
+        log.trimToMaxBytes(options.maxLogBytes);
+      }
     } catch (error) {
       onError(error, 'flush');
     }
@@ -137,7 +171,6 @@ export function createPipeline(options: PipelineOptions): Pipeline {
       seq = (seqByXs.get(xs) ?? 0) + 1;
       seqByXs.set(xs, seq);
     }
-    const redacted = redactEventData(type, data);
     const candidate = {
       ...merged,
       id: nextId,
@@ -146,7 +179,9 @@ export function createPipeline(options: PipelineOptions): Pipeline {
       type,
       xs,
       seq,
-      data: redacted.data,
+      // v0.9 (D-28): the payload as the producer gave it, copied so that a producer changing its
+      // own object after `emit` cannot change what was recorded.
+      data: snapshot(data),
     };
     nextId += 1;
 

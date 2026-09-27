@@ -9,6 +9,7 @@ Two traces per request, both produced by `src/mcp/index.ts`; the schemas live in
 | Trace | Fields |
 |---|---|
 | `http.request` event (`HttpRequestData`) | `method`, `path`, `status`, `duration_ms`, `user_agent`, `remote_ip_prefix` (`/24` for IPv4, `/48` for IPv6, invariant 11), `anthropic_egress` (inside `160.79.104.0/21`), `origin`, `origin_decision` (`allowed` / `absent` / `rejected` / `logged`), `mcp_protocol_version_header`, `mcp_session_id` (recorded if a client sends one; never issued), `has_authorization`, `content_type`, `sse`, `rate_limited` |
+| `http.request` `raw` block (v0.9, D-28; every path, not only `/mcp`) | every header in arrival order with case and duplicates (so `Signature`, `Signature-Input`, `Signature-Agent`, `traceparent`, `X-Forwarded-For`, vendor headers), the body bytes as sent, `http_version`, the socket peer. Read it from an admin export; the dashboard shows it under "Request as received" |
 | `session.initialized` event (`SessionInitializedData`) | `protocol_version_requested`, `protocol_version_negotiated`, `client` (`clientInfo` verbatim: `name`, `version`, `title`), `client_capabilities`, `server_capabilities`, `instructions_sent`, `initialize_count` |
 | One structured stdout line, `"event":"http.request"` | the `http.request` fields plus `base_url`, `host`, `origin_policy`, `rpc_methods`, `rpc_tools`, `initialize_protocol_version`, `client_info`, `client_capabilities`, `grant_id`, `xs`. This is how the table below is filled from a log with no dashboard attached (`gcloud run services logs read mcp-bank` once deployed) |
 
@@ -34,15 +35,26 @@ Measured from the developer's Mac against revision `mcp-bank-00004-9vw`, `ORIGIN
 - `gcloud run services describe --format=yaml` carries a default `startupProbe` with `timeoutSeconds: 240` above the service's own `timeoutSeconds: 3600`; smoke check 6 reads the service field.
 - Domain mapping `glassbank-mcp.abovethefog.app`: record created 19:23 UTC, `CertificateProvisioned` 19:34 UTC (11 minutes, well inside the hourly re-check the status message announces); at 19:41 UTC Google's edges still answered TLS for the name inconsistently from Brazil (one request in four), while the GitHub runner's smoke passed all 36 checks at 19:42 UTC. Plain `http://` on the name already answered 302 to `https://` before the certificate was served.
 
+## The first real clients on Cloud Run (2026-09-27, `exports/*20260927*`)
+
+Facts from the X-ray exports and Cloud Run's request log, recorded before v0.9, so without headers:
+
+- claude.ai connected as `clientInfo` `{"name":"Anthropic/ClaudeAI","version":"1.0.0"}`, protocol `2025-11-25`, capabilities `{"extensions":{"io.modelcontextprotocol/ui":{"mimeTypes":["text/html;profile=mcp-app"]}}}`, `User-Agent: Claude-User`; its `initialize` carried `_meta.traceparent` (W3C form), its `tools/call` no `_meta`.
+- Every `Claude-User` request, and the `python-httpx/0.28.1` calls to `/token` and `/register` that go with them, reached the container as `0.0.0.0`: Cloud Run's own request log shows `remoteIp: 0.0.0.0`, so `remote_ip_prefix` is `0.0.0.0/24` and `anthropic_egress` is `false` (A-43). curl, Python and Codex callers show real addresses.
+- Codex arrived as `openai-mcp/1.0.0 (Codex)` from `51.59.24.0/24` and `51.59.48.0/24`, and `openai-mcp/1.0.0` without the suffix.
+- OpenAI's `OAI-SearchBot/1.0` fetched `/robots.txt` (404) on the custom hostname.
+- Whether any of them signed with Web Bot Auth is unknown: no header was recorded before v0.9, and Cloud Run's request log keeps none. The next connection after the v0.9 deploy answers it (`raw.headers`, the "Signed with Web Bot Auth" callout).
+
 ## Still unobserved
 
-- claude.ai (web, Desktop, mobile): no connector has ever been created; nothing is deployed and D-9 (which account runs the first live test) is open.
+- claude.ai Desktop and mobile; the web client's full row in the table above (its DCR body, headers and `Origin`, which v0.9 records).
 - Claude Code.
 - ChatGPT: the owner reports (by 2026-09-15) that it connected through the cloudflared tunnel, but its `clientInfo`, headers, `Origin` and DCR body were not recorded. Capture them on its next connection.
-- Any request from Anthropic's egress range `160.79.104.0/21`: `anthropic_egress` has never been `true`.
+- Any request from Anthropic's egress range `160.79.104.0/21`: `anthropic_egress` has never been `true`; claude.ai arrives as `0.0.0.0` (above).
+- Any Web Bot Auth signature (`Signature-Agent`) from any client.
 - Any `Origin` header from a browser-based client. Every recorded client sent none, so `log-only` and `allowlist` have been indistinguishable.
 - A-40 (does Claude act on the 403 step-up), A-41 (does the step-up popup carry the `login_id` cookie), A-05 / A-06 (`rationale` quality from Claude), A-17 (Origin values), and the `tools/list` cadence ("every 25 to 80 s" is Anthropic's documentation, not a measurement here).
-- Cloud Run: a cold start (never happens with one always-on instance) and the proxy hop count behind `app.set('trust proxy', 1)`, which needs a `remote_ip_prefix` recorded from a real client.
+- Cloud Run: a cold start (never happens with one always-on instance) and the proxy hop count behind `app.set('trust proxy', 1)`: since v0.9 the whole `X-Forwarded-For` chain and the socket peer are in `raw`, so one admin export of a real request answers it.
 
 ## Decisions taken from these observations
 

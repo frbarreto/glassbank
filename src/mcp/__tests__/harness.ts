@@ -22,6 +22,7 @@ import { expect } from 'vitest';
 
 import {
   ACCESS_TOKEN_PREFIX,
+  keepRawBody,
   PUBLIC_MCP_PATH,
   PUBLIC_TOOL_CATALOG,
   TOOL_CATALOG,
@@ -307,6 +308,8 @@ export interface McpHarnessOptions {
   readonly now?: () => Date;
   /** Mounts the public lane at `PUBLIC_MCP_PATH` with a fake registry (D-26). */
   readonly publicLane?: { readonly ipToolCallsPerMin?: number; readonly toolCallsPerMin?: number };
+  /** v0.9 (D-28): `XRAY_CAPTURE_SKIP_PATHS` for the catch-all observer. */
+  readonly captureSkipPaths?: readonly string[];
 }
 
 export async function startMcpHarness(options: McpHarnessOptions = {}): Promise<McpHarness> {
@@ -371,6 +374,7 @@ export async function startMcpHarness(options: McpHarnessOptions = {}): Promise<
     now,
     // The tests drive `sweep()` by hand; a timer would make them depend on wall-clock time.
     sweepIntervalMs: 0,
+    ...(options.captureSkipPaths === undefined ? {} : { captureSkipPaths: options.captureSkipPaths }),
     ...(publicRegistry === null
       ? {}
       : {
@@ -392,8 +396,18 @@ export async function startMcpHarness(options: McpHarnessOptions = {}): Promise<
     response.setHeader('x-request-id', HTTP_REQUEST_ID_SENTINEL);
     next();
   });
+  // The catch-all `http.request` producer, in front of every router as in src/app.ts (D-28).
+  app.use(handler.httpObserver);
   if (handler.publicLane !== null) app.use(PUBLIC_MCP_PATH, handler.publicLane);
   app.use('/mcp', handler);
+  // A body-parsing route outside MCP, standing in for /register and /token.
+  app.post(
+    '/test/form',
+    express.urlencoded({ extended: false, verify: keepRawBody }),
+    (_request, response) => {
+      response.status(201).end();
+    },
+  );
   server.on('request', app);
 
   return {

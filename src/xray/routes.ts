@@ -9,11 +9,15 @@
  *   - nothing private is answered without a viewer cookie, and a pairing cookie only ever sees the
  *     grants of its own login (`resolveScope` and `readModel.matchesScope` decide);
  *   - an admin cookie sees everything, harder redacted (`applyObserverRedaction`);
+ *   - every event leaves through `viewEvent` (v0.9, D-28): the log stores events as they arrived
+ *     and the redaction of `redaction.ts` runs here, on the way out, never on the way in;
  *   - `?lane=public` (v0.7, D-26) answers without a cookie for the public lane alone: the pseudo
  *     login `PUBLIC_LOGIN_ID`, read-only, whose callers were told their calls are public.
  *
- * The export (v0.8, D-27) is the one exception to the second rule: it hands the operator the log
- * verbatim, and it also takes the admin token as a bearer so a single `curl` downloads it.
+ * The export (v0.8, D-27) is the one exception to the second and third rules: it hands the
+ * operator the log as stored - raw requests, headers and bodies included - and it also takes the
+ * admin token as a bearer so a single `curl` downloads it. A pairing viewer's or the public
+ * lane's export is redacted like the dashboard.
  *
  * The SPA itself, `/xray/assets/*` and `/xray/fixtures/events.jsonl` belong to the `dashboard`
  * block: this router leaves those paths untouched so the static handler behind it answers them.
@@ -45,7 +49,7 @@ import type { Pipeline } from './emitter.js';
 import type { EventLog } from './log.js';
 import type { XrayPairing } from './pairing.js';
 import type { ReadModel, SessionRow } from './read-model.js';
-import { applyObserverRedaction, ipPrefixOf } from './redaction.js';
+import { ipPrefixOf, viewEvent } from './redaction.js';
 import type { Ring } from './ring.js';
 import { logFilterFor, openSseStream, type SseStream } from './sse.js';
 import type { BankSummaryLookup, PersonaLookup, ViewerIdentity, XrayConfig } from './types.js';
@@ -491,7 +495,7 @@ export function buildXrayRouter(runtime: XrayRoutesRuntime): Router {
       const events = log
         .readSession(xs, after, limit)
         .filter((event) => readModel.matchesScope(event, scope))
-        .map((event) => (scope.viewer_kind === 'admin' ? applyObserverRedaction(event) : event));
+        .map((event) => viewEvent(event, scope.viewer_kind));
       const lastId = events.length > 0 ? events[events.length - 1]?.id : undefined;
       const payload: XraySessionEventsResponse = {
         data: events,
@@ -751,7 +755,8 @@ export function buildXrayRouter(runtime: XrayRoutesRuntime): Router {
    * export open forever. Pages of `EXPORT_PAGE_ROWS` come from the SQLite log - from the ring when
    * the log is degraded - and the loop yields between pages and waits for `drain`, so a
    * 200,000-row export never holds the event loop or buffers the whole log in memory. Verbatim on
-   * purpose: the export is the operator's copy, and the observer view stays the redacted one.
+   * purpose for the admin: the export is the operator's copy, and the observer view stays the
+   * redacted one. Any other reader gets `viewEvent`, the dashboard's own view (v0.9, D-28).
    */
   router.get(mounted(XRAY_ROUTES.export), requireExportViewer, (request, response) => {
     const query = request.query as Record<string, unknown>;
@@ -789,7 +794,11 @@ export function buildXrayRouter(runtime: XrayRoutesRuntime): Router {
         for (const event of rows) {
           if (event.id > until) break;
           cursor = event.id;
-          if (readModel.matchesScope(event, scope)) chunk += `${JSON.stringify(event)}\n`;
+          if (!readModel.matchesScope(event, scope)) continue;
+          // The operator's copy is the log as stored (D-27, D-28); every other reader of the
+          // export - a pairing viewer, the public lane - gets the same view as the dashboard.
+          const shown = scope.viewer_kind === 'admin' ? event : viewEvent(event, scope.viewer_kind);
+          chunk += `${JSON.stringify(shown)}\n`;
         }
         // Past the bound, a short page or the bound itself: nothing older is left to read.
         done = rows.length < EXPORT_PAGE_ROWS || cursor >= until || (rows.at(-1)?.id ?? 0) > until;

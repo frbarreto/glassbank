@@ -195,8 +195,16 @@ on an auto-assigned DevTools port, `CDP_PORT` pins it; interrupting the run stil
 removes its profile).
 
 Keep a copy (D-27): `GET /xray/api/export` answers the same events as JSONL, one per line, oldest
-first, verbatim; `?after=<id>` returns only what is newer than a previous file's last line. The
-Sessions panel's "Download log (JSONL)" is the same request.
+first; `?after=<id>` returns only what is newer than a previous file's last line. The Sessions
+panel's "Download log (JSONL)" is the same request. With the admin token it is the log as stored:
+every `http.request` carries its `raw` block, every header and the body bytes as they arrived,
+bearer tokens included (D-28); with a cookie or `?lane=public` it is the dashboard's redacted view.
+To see what one request carried, headers first:
+
+```bash
+jq -c 'select(.type=="http.request") | {path: .data.path, headers: .data.raw.headers}' exports/<file>.jsonl
+jq -c 'select(.type=="http.request") | .data.raw.headers[] | select(.[0]|test("^signature";"i"))' exports/<file>.jsonl
+```
 
 ```bash
 curl -s -b /tmp/xray.cookies -o my-login.jsonl http://localhost:8080/xray/api/export     # your login

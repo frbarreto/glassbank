@@ -35,6 +35,8 @@ import {
 } from './format.js';
 import { isKnownType, labelOf, statusOf, summaryOf } from './catalogue.js';
 import { jsonView, viewerId } from './json-view.js';
+import { rawRequestView } from './raw-request.js';
+import { unmappedOf } from './unmapped.js';
 
 const STATUS_TEXT = {
   ok: 'Completed',
@@ -186,6 +188,45 @@ function resultBlock(call, json) {
   );
 }
 
+/** The `raw` block of an `http.request`, under its own heading (v0.9, D-28). */
+function rawRequestSection(event, json, title) {
+  const raw = event?.type === 'http.request' ? event.data?.raw : null;
+  if (!raw) return null;
+  return h(
+    'div',
+    { class: 'call-section' },
+    h(
+      'h4',
+      { class: 'sub-title' },
+      title,
+      h('span', { class: 'sub-note' }, `http.request #${count(event.id)}, recorded before any parsing`),
+    ),
+    rawRequestView(raw, { id: viewerId('raw', event.id), state: json }),
+  );
+}
+
+/** Whatever the event carries that the contract does not name yet, verbatim (v0.9, D-28). */
+function unmappedSection(event, json) {
+  if (!isKnownType(event.type)) return null;
+  const found = unmappedOf(event);
+  if (found === null) return null;
+  const value = Object.keys(found.envelope).length ? found : found.data;
+  return h(
+    'div',
+    { class: 'call-section unmapped' },
+    callout(
+      'Fields the contract does not map yet',
+      'The server stores every field it is given. These arrived outside the catalogued shape of this event type; they are shown exactly as recorded.',
+      'warn',
+    ),
+    jsonView(value, {
+      id: viewerId('unmapped', event.id),
+      state: json,
+      title: 'Unmapped fields',
+    }),
+  );
+}
+
 function renderCall(model, call) {
   const { store, view, now } = model;
   const children = call.child_event_ids
@@ -252,6 +293,11 @@ function renderCall(model, call) {
           }),
         )
       : null,
+    rawRequestSection(
+      call.http?.event_id ? store.getEventById(call.http.event_id) : null,
+      view.json ?? {},
+      'Request as received',
+    ),
     h(
       'div',
       { class: 'call-section' },
@@ -306,6 +352,8 @@ function renderEvent(model, event) {
       kv('Protocol', h('span', { class: 'mono' }, event.protocol_version ?? 'none')),
       kv('Era', event.era ?? 'none'),
     ),
+    rawRequestSection(event, view.json ?? {}, 'Request as received'),
+    unmappedSection(event, view.json ?? {}),
     h(
       'div',
       { class: 'call-section' },

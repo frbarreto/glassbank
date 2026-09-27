@@ -21,6 +21,8 @@ import type { Request, RequestHandler, Response, Router } from 'express';
 
 import {
   ClientInfoSchema,
+  keepRawBody,
+  markHttpObserved,
   PUBLIC_GRANT_PREFIX,
   PUBLIC_LOGIN_ID,
   type ClientInfo,
@@ -160,7 +162,8 @@ export function createPublicLane(deps: PublicLaneDeps): PublicLaneHandler {
   sweepTimer?.unref();
 
   const router: Router = express.Router();
-  router.use(express.json({ limit: PUBLIC_BODY_LIMIT }));
+  // `keepRawBody` keeps the bytes for the `raw` block of `http.request` (v0.9, D-28).
+  router.use(express.json({ limit: PUBLIC_BODY_LIMIT, verify: keepRawBody }));
   const observed = new WeakSet<Response>();
   const applyCors = createMcpCors(config);
   /** A request that never reaches the handler is still the visitor's, and public. */
@@ -204,7 +207,12 @@ export function createPublicLane(deps: PublicLaneDeps): PublicLaneHandler {
     };
 
     observed.add(response);
-    response.on('finish', () => {
+    markHttpObserved(response);
+    // Once, on `finish` or on a `close` that came first (the caller hung up mid-answer).
+    let reported = false;
+    const report = (): void => {
+      if (reported) return;
+      reported = true;
       const status = response.statusCode;
       const durationMs = Math.max(0, now().getTime() - startedAt);
       const contentType = String(response.getHeader('content-type') ?? '');
@@ -245,7 +253,9 @@ export function createPublicLane(deps: PublicLaneDeps): PublicLaneHandler {
         }),
         correlation,
       );
-    });
+    };
+    response.on('finish', report);
+    response.on('close', report);
 
     if (!originDecision.allowed) {
       xray.emit(

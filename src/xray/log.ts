@@ -59,6 +59,13 @@ export interface EventLog {
   deleteMatching(filter: LogFilter): number;
   /** Deletes the oldest rows until at most `maxRows` remain; returns how many rows went. */
   trimToMaxRows(maxRows: number): number;
+  /** v0.9 (D-28): the UTF-8 size of every stored envelope together. */
+  storedBytes(): number;
+  /**
+   * v0.9 (D-28): deletes the oldest whole events until the stored envelopes fit in `maxBytes`;
+   * the newest event always stays. Returns how many rows went.
+   */
+  trimToMaxBytes(maxBytes: number): number;
   /**
    * Gives freed pages back to the filesystem. Time-based retention alone never shrinks the file,
    * and on Cloud Run gen2 `/tmp` is memory-backed (A-25, docs/DEPLOYMENT.md), so a deleted row
@@ -145,6 +152,12 @@ export function createNullEventLog(path = 'disabled'): EventLog {
     trimToMaxRows() {
       return 0;
     },
+    storedBytes() {
+      return 0;
+    },
+    trimToMaxBytes() {
+      return 0;
+    },
     reclaim() {},
     fileStats() {
       return { pageSize: 0, pageCount: 0, freePages: 0 };
@@ -194,8 +207,19 @@ export function createEventLog(options: EventLogOptions): EventLog {
     'INSERT OR REPLACE INTO events (id, ts, ts_ms, type, xs, login_id, grant_id, seq, envelope) ' +
       'VALUES (@id, @ts, @ts_ms, @type, @xs, @login_id, @grant_id, @seq, @envelope)',
   );
+  /** Recounted from the table after a delete; kept current on append in between. */
+  const sumBytes = database.prepare(
+    'SELECT COALESCE(SUM(length(CAST(envelope AS BLOB))), 0) AS value FROM events',
+  );
+  let totalBytes = (sumBytes.get() as { value: number } | undefined)?.value ?? 0;
+  const recount = (): void => {
+    totalBytes = (sumBytes.get() as { value: number } | undefined)?.value ?? 0;
+  };
+
   const insertMany = database.transaction((events: readonly XrayEvent[]) => {
     for (const event of events) {
+      const envelope = JSON.stringify(event);
+      totalBytes += Buffer.byteLength(envelope);
       insert.run({
         id: event.id,
         ts: event.ts,
@@ -205,7 +229,7 @@ export function createEventLog(options: EventLogOptions): EventLog {
         login_id: event.login_id,
         grant_id: event.grant_id,
         seq: event.seq,
-        envelope: JSON.stringify(event),
+        envelope,
       });
     }
   });
@@ -352,6 +376,9 @@ export function createEventLog(options: EventLogOptions): EventLog {
     deleteOlderThan(cutoffMs) {
       return guard('deleteOlderThan', 0, () => {
         const result = database.prepare('DELETE FROM events WHERE ts_ms < ?').run(cutoffMs);
+        if (result.changes > 0) recount();
+        if (result.changes > 0) recount();
+        if (result.changes > 0) recount();
         return result.changes;
       });
     },
@@ -379,6 +406,34 @@ export function createEventLog(options: EventLogOptions): EventLog {
               '(SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET ?)',
           )
           .run(maxRows);
+        return result.changes;
+      });
+    },
+
+    storedBytes() {
+      return totalBytes;
+    },
+
+    trimToMaxBytes(maxBytes) {
+      return guard('trimToMaxBytes', 0, () => {
+        if (totalBytes <= maxBytes) return 0;
+        // Newest first, adding sizes until the budget is spent: everything older than the last
+        // row that fits goes, whole. The newest row stays even when it alone is over the budget.
+        let kept = 0;
+        let cutoff: number | null = null;
+        const rows = database
+          .prepare('SELECT id, length(CAST(envelope AS BLOB)) AS bytes FROM events ORDER BY id DESC')
+          .iterate() as IterableIterator<{ id: number; bytes: number }>;
+        for (const row of rows) {
+          if (kept > 0 && kept + row.bytes > maxBytes) {
+            cutoff = row.id;
+            break;
+          }
+          kept += row.bytes;
+        }
+        if (cutoff === null) return 0;
+        const result = database.prepare('DELETE FROM events WHERE id <= ?').run(cutoff);
+        if (result.changes > 0) recount();
         return result.changes;
       });
     },

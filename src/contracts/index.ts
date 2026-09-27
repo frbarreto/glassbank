@@ -12,3 +12,4 @@ export * from './auth.js';
 export * from './tools.js';
 export * from './xray-api.js';
 export * from './public.js';
+export * from './raw-http.js';

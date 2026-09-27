@@ -3216,6 +3216,55 @@ a.btn {
   border-bottom: 0;
 }
 
+/* The request as it reached the server (v0.9, D-28): every header in arrival order, the body as
+   read, the three Web Bot Auth headers marked. Long values (a base64 signature) wrap in place. */
+.raw-request-line {
+  margin: 4px 0 8px;
+  font-size: 12.5px;
+  word-break: break-all;
+}
+
+.raw-unsigned {
+  margin: 4px 0 8px;
+  font-size: 12px;
+}
+
+.raw-headers .table td {
+  font-size: 11.5px;
+}
+
+.raw-header-index {
+  width: 2.5em;
+  color: var(--text-3);
+}
+
+.raw-header-name {
+  white-space: nowrap;
+}
+
+.raw-header-value {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.raw-header-signed td {
+  background: var(--accent-soft);
+}
+
+.raw-header-signed .raw-header-name {
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.raw-body {
+  margin-top: 10px;
+}
+
+.raw-peer {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+}
+
 .tool-list {
   list-style: none;
   margin: 0;

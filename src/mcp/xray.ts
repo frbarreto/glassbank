@@ -124,9 +124,10 @@ export interface ResultSummary {
 }
 
 /**
- * The marker the emitter appends when it cuts a preview (`previewOf` in `src/xray/redaction.ts`).
- * Copied, not imported: this block may not reach into `src/xray` (docs/REPO_LAYOUT.md section 3).
- * `__tests__/events.test.ts` reads the original from disk and fails if the two ever drift.
+ * The marker a cut preview ends with; the same one the viewer redaction uses (`previewOf` in
+ * `src/xray/redaction.ts`). Copied, not imported: this block may not reach into `src/xray`
+ * (docs/REPO_LAYOUT.md section 3). `__tests__/events.test.ts` reads the original from disk and
+ * fails if the two ever drift.
  */
 export const RESULT_PREVIEW_TRUNCATION_SUFFIX = '…[truncated]';
 
@@ -145,9 +146,10 @@ export function summariseResult(result: ToolResult): ResultSummary {
   return {
     contentTypes,
     contentChars,
-    // The emitter truncates too; cutting here keeps a 150 000-character answer out of the queue.
-    // The marker is what separates a preview from a whole result; `contentChars` above keeps
-    // counting every character the model received, cut or not.
+    // A preview of the server's own answer, not a record of what arrived: the emitter stores what
+    // it is given (D-28), so this cut is what keeps a 150 000-character answer out of the log.
+    // The marker separates a preview from a whole result; `contentChars` above keeps counting
+    // every character the model received, cut or not.
     textPreview:
       joined.length === 0
         ? null

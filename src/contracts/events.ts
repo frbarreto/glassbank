@@ -9,6 +9,11 @@
  * Frozen at the T0.5 gate and append-only afterwards: new event types and new optional fields
  * may be added through docs/contracts/CHANGES.md; existing names are never renamed or removed.
  *
+ * v0.9 (D-28): every schema here is open. A field the catalogue does not name is kept verbatim,
+ * never stripped, at any depth, so a producer (or a client) that sends something nobody mapped
+ * yet still reaches the log. The named fields are the categorised view; `dataKeysOf` lists them,
+ * and anything else in `data` is the uncategorised remainder the dashboard shows as "unmapped".
+ *
  * Pure types and zod schemas. No I/O, no business logic.
  */
 import { z } from 'zod';
@@ -84,7 +89,7 @@ const JsonObject = z.record(z.string(), z.unknown());
  * The fields every event carries. Correlation keys default to `null` so a producer can omit
  * what it does not know; the emitter fills `id`, `ts`, `v` and `seq`.
  */
-const EnvelopeBase = z.object({
+const EnvelopeBase = z.looseObject({
   /** Process-monotonic integer; SQLite primary key, SSE `id` and replay cursor. */
   id: z.int().nonnegative(),
   /** ISO-8601 UTC. */
@@ -134,7 +139,7 @@ function event<T extends string, D extends z.ZodType>(type: T, data: D) {
 // server.* (producer: xray)
 // ---------------------------------------------------------------------------
 
-export const ServerStartedData = z.object({
+export const ServerStartedData = z.looseObject({
   boot_id: idSchema('boot'),
   version: z.string(),
   git_sha: z.string().nullable().default(null),
@@ -145,7 +150,7 @@ export const ServerStartedData = z.object({
   node_version: z.string().nullable().default(null),
 });
 
-export const ServerStoppingData = z.object({
+export const ServerStoppingData = z.looseObject({
   boot_id: idSchema('boot'),
   version: z.string(),
   reason: z.enum(['sigterm', 'sigint', 'shutdown']).default('sigterm'),
@@ -161,7 +166,42 @@ export const ServerStoppingData = z.object({
 export const OriginDecisionSchema = z.enum(['allowed', 'absent', 'rejected', 'logged']);
 export type OriginDecision = z.infer<typeof OriginDecisionSchema>;
 
-export const HttpRequestData = z.object({
+/** One header line as it arrived: the name in its original case, the value untouched. */
+export const RawHeaderSchema = z.tuple([z.string(), z.string()]);
+export type RawHeader = z.infer<typeof RawHeaderSchema>;
+
+/**
+ * v0.9 (D-28): the request exactly as it reached the process, before anything read it.
+ *
+ * This is the uncategorised block of `http.request`: every header in arrival order (duplicates
+ * and case kept, `Signature`, `Signature-Input` and `Signature-Agent` of Web Bot Auth included),
+ * the body bytes the parser read, and the socket peer. Nothing here is mapped, filtered or
+ * redacted on the way in; the viewer surfaces redact on the way out (`src/xray/redaction.ts`) and
+ * the operator's export returns it as stored. Built by `captureRawRequest` (`raw-http.ts`).
+ */
+export const RawHttpRequestSchema = z.looseObject({
+  method: z.string(),
+  /** The request target as sent: path and query string. */
+  url: z.string(),
+  http_version: z.string().nullable().default(null),
+  headers: z.array(RawHeaderSchema).default([]),
+  trailers: z.array(RawHeaderSchema).default([]),
+  /** The body bytes a parser read (after `Content-Encoding` inflation), as text or base64. */
+  body: z.string().nullable().default(null),
+  body_encoding: z.enum(['utf8', 'base64']).nullable().default(null),
+  body_bytes: z.int().nonnegative().nullable().default(null),
+  /**
+   * False when no parser read the body: no body at all, a content type the route does not parse,
+   * or one past the parser's size limit. `content-length` in `headers` still says what was sent.
+   */
+  body_read: z.boolean().default(false),
+  /** The TCP peer as the socket reports it (on Cloud Run, Google's front end). */
+  remote_address: z.string().nullable().default(null),
+  remote_port: z.int().nullable().default(null),
+});
+export type RawHttpRequest = z.infer<typeof RawHttpRequestSchema>;
+
+export const HttpRequestData = z.looseObject({
   method: z.string(),
   path: z.string(),
   status: z.int(),
@@ -180,6 +220,8 @@ export const HttpRequestData = z.object({
   content_type: z.string().nullable().default(null),
   sse: z.boolean().default(false),
   rate_limited: z.boolean().default(false),
+  /** v0.9 (D-28): the request as it arrived. Absent on rows recorded before v0.9. */
+  raw: RawHttpRequestSchema.optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -189,7 +231,7 @@ export const HttpRequestData = z.object({
 export const AuthLevelSchema = z.enum(['read_only', 'read_write']);
 export type AuthLevel = z.infer<typeof AuthLevelSchema>;
 
-export const AuthChallengeData = z.object({
+export const AuthChallengeData = z.looseObject({
   status: z.int().default(401),
   /** RFC 6750 `error` code when one applies (`invalid_token`, `insufficient_scope`). */
   error: z.string().nullable().default(null),
@@ -199,7 +241,7 @@ export const AuthChallengeData = z.object({
   reason: z.string().nullable().default(null),
 });
 
-export const AuthVerifiedData = z.object({
+export const AuthVerifiedData = z.looseObject({
   grant_id: idSchema('grant'),
   login_id: idSchema('login').nullable().default(null),
   persona_id: idSchema('persona'),
@@ -212,7 +254,7 @@ export const AuthVerifiedData = z.object({
   expires_at: z.iso.datetime(),
 });
 
-export const AuthRejectedData = z.object({
+export const AuthRejectedData = z.looseObject({
   status: z.int().default(401),
   error: z.string(),
   reason: z.enum([
@@ -236,7 +278,7 @@ export const AuthRejectedData = z.object({
 /** Why the verifier turned a bearer token down (`auth.rejected.data.reason`). */
 export type AuthRejectionReason = z.infer<typeof AuthRejectedData>['reason'];
 
-export const AuthClientRegisteredData = z.object({
+export const AuthClientRegisteredData = z.looseObject({
   client_id: z.string(),
   client_name: z.string().nullable().default(null),
   redirect_uris: z.array(z.string()),
@@ -244,14 +286,14 @@ export const AuthClientRegisteredData = z.object({
   application_type: z.string().nullable().default(null),
 });
 
-export const AuthClientReconstructedData = z.object({
+export const AuthClientReconstructedData = z.looseObject({
   client_id: z.string(),
   client_name: z.string().default('unknown (reconstructed)'),
   redirect_uris: z.array(z.string()),
   reason: z.enum(['unknown_client_after_restart', 'evicted_from_lru']),
 });
 
-export const AuthGrantCreatedData = z.object({
+export const AuthGrantCreatedData = z.looseObject({
   grant_id: idSchema('grant'),
   /** Set when the consent came from a browser already holding a login cookie (ADR-14). */
   parent_grant_id: idSchema('grant').nullable().default(null),
@@ -266,7 +308,7 @@ export const AuthGrantCreatedData = z.object({
   shared_persona: z.boolean().default(false),
 });
 
-export const AuthGrantUpdatedData = z.object({
+export const AuthGrantUpdatedData = z.looseObject({
   /** The SAME grant id as the original consent: a step-up extends, it never replaces (ADR-14). */
   grant_id: idSchema('grant'),
   login_id: idSchema('login'),
@@ -278,7 +320,7 @@ export const AuthGrantUpdatedData = z.object({
   reason: z.enum(['step_up', 're_consent']).default('step_up'),
 });
 
-export const AuthTokenIssuedData = z.object({
+export const AuthTokenIssuedData = z.looseObject({
   grant_id: idSchema('grant'),
   login_id: idSchema('login').nullable().default(null),
   persona_id: idSchema('persona'),
@@ -291,7 +333,7 @@ export const AuthTokenIssuedData = z.object({
   refresh_expires_at: z.iso.datetime().nullable().default(null),
 });
 
-export const AuthTokenRefreshedData = z.object({
+export const AuthTokenRefreshedData = z.looseObject({
   grant_id: idSchema('grant'),
   login_id: idSchema('login').nullable().default(null),
   persona_id: idSchema('persona'),
@@ -304,14 +346,14 @@ export const AuthTokenRefreshedData = z.object({
   rotated_jti: z.string().nullable().default(null),
 });
 
-export const AuthTokenRevokedData = z.object({
+export const AuthTokenRevokedData = z.looseObject({
   grant_id: idSchema('grant').nullable().default(null),
   login_id: idSchema('login').nullable().default(null),
   client_id: z.string().nullable().default(null),
   reason: z.enum(['revocation_request', 'grant_revoked', 'reuse_detected']),
 });
 
-export const AuthStepupRequestedData = z.object({
+export const AuthStepupRequestedData = z.looseObject({
   status: z.int().default(403),
   error: z.string().default('insufficient_scope'),
   grant_id: idSchema('grant'),
@@ -325,7 +367,7 @@ export const AuthStepupRequestedData = z.object({
   resource_metadata: z.string(),
 });
 
-export const AuthLoginCreatedData = z.object({
+export const AuthLoginCreatedData = z.looseObject({
   login_id: idSchema('login'),
   persona_id: idSchema('persona'),
   /** 30-day cookie expiry (ADR-14). */
@@ -339,13 +381,13 @@ export const AuthLoginCreatedData = z.object({
 // session.* (producer: mcp)
 // ---------------------------------------------------------------------------
 
-export const SessionStartedData = z.object({
+export const SessionStartedData = z.looseObject({
   reason: z.enum(['first_request', 'idle_gap']),
   /** Silence before this request, when the session was split on an idle gap (A-27). */
   idle_ms: z.number().nonnegative().nullable().default(null),
 });
 
-export const SessionInitializedData = z.object({
+export const SessionInitializedData = z.looseObject({
   protocol_version_requested: z.string().nullable().default(null),
   protocol_version_negotiated: z.string(),
   client: ClientInfoSchema.nullable().default(null),
@@ -357,7 +399,7 @@ export const SessionInitializedData = z.object({
   initialize_count: z.int().positive(),
 });
 
-export const SessionEndedData = z.object({
+export const SessionEndedData = z.looseObject({
   reason: z.enum(['idle_gap', 'server_stopping']),
   idle_ms: z.number().nonnegative().nullable().default(null),
   duration_ms: z.number().nonnegative().nullable().default(null),
@@ -366,7 +408,7 @@ export const SessionEndedData = z.object({
   initialize_count: z.int().nonnegative().default(0),
 });
 
-export const SessionRejectedData = z.object({
+export const SessionRejectedData = z.looseObject({
   reason: z.enum(['initialize', 'origin_rejected', 'rate_limited', 'unsupported_protocol']),
   error: z.string().nullable().default(null),
   protocol_version_requested: z.string().nullable().default(null),
@@ -380,7 +422,7 @@ export const SessionRejectedData = z.object({
  * v0.5: the `tools/list` entry as the client received it, minus `name` and `title` (carried by the
  * row). Optional: rows recorded before v0.5 do not have it.
  */
-export const CatalogToolDescriptorSchema = z.object({
+export const CatalogToolDescriptorSchema = z.looseObject({
   description: z.string(),
   /** The published JSON Schema verbatim; `rationale` is in `required` (ADR-8). */
   inputSchema: z.record(z.string(), z.unknown()),
@@ -390,7 +432,7 @@ export const CatalogToolDescriptorSchema = z.object({
 export type CatalogToolDescriptor = z.infer<typeof CatalogToolDescriptorSchema>;
 
 /** One row of the tool array carried by `catalog.tools_listed`. */
-export const CatalogToolSchema = z.object({
+export const CatalogToolSchema = z.looseObject({
   name: z.string(),
   title: z.string(),
   read_only: z.boolean(),
@@ -403,7 +445,7 @@ export const CatalogToolSchema = z.object({
 export type CatalogTool = z.infer<typeof CatalogToolSchema>;
 
 /** One row of the availability table (docs/TOOL_CATALOG.md section 4, ADR-13). */
-export const ToolAvailabilitySchema = z.object({
+export const ToolAvailabilitySchema = z.looseObject({
   tool: z.string(),
   /** Was the entry in the `tools/list` the client received? */
   listed: z.boolean(),
@@ -415,7 +457,7 @@ export const ToolAvailabilitySchema = z.object({
   missing_scopes: z.array(z.string()),
 });
 
-export const CatalogToolsListedData = z.object({
+export const CatalogToolsListedData = z.looseObject({
   count: z.int().nonnegative(),
   content_hash: z.string(),
   /**
@@ -428,15 +470,15 @@ export const CatalogToolsListedData = z.object({
   feature_flags: z.array(z.string()).default([]),
 });
 
-export const CatalogResourcesListedData = z.object({
+export const CatalogResourcesListedData = z.looseObject({
   count: z.int().nonnegative(),
 });
 
-export const CatalogPromptsListedData = z.object({
+export const CatalogPromptsListedData = z.looseObject({
   count: z.int().nonnegative(),
 });
 
-export const CatalogAvailabilityData = z.object({
+export const CatalogAvailabilityData = z.looseObject({
   content_hash: z.string(),
   availability: z.array(ToolAvailabilitySchema),
   feature_flags: z.array(z.string()).default([]),
@@ -448,14 +490,14 @@ export const CatalogAvailabilityData = z.object({
 // tool.* (producer: mcp lifecycle + tools payload)
 // ---------------------------------------------------------------------------
 
-export const ToolErrorSchema = z.object({
+export const ToolErrorSchema = z.looseObject({
   code: z.union([z.int(), z.string()]).nullable().default(null),
   message: z.string(),
   /** `protocol` = a JSON-RPC error, `tool` = `isError: true` content (A-08). */
   class: z.enum(['protocol', 'tool']),
 });
 
-export const ToolCallStartedData = z.object({
+export const ToolCallStartedData = z.looseObject({
   /** OTel `gen_ai.tool.name`. */
   tool: z.string(),
   /** Verbatim except the per-tool deny-list and the global token patterns (section 3). */
@@ -471,7 +513,7 @@ export const ToolCallStartedData = z.object({
   budget_ms: z.int().positive().default(CLAUDE_TOOL_BUDGET_MS),
 });
 
-export const ToolCallCompletedData = z.object({
+export const ToolCallCompletedData = z.looseObject({
   tool: z.string(),
   duration_ms: z.number().nonnegative(),
   budget_ms: z.int().positive().default(CLAUDE_TOOL_BUDGET_MS),
@@ -486,13 +528,13 @@ export const ToolCallCompletedData = z.object({
   text_preview: z.string().nullable().default(null),
 });
 
-export const ToolCallCancelledData = z.object({
+export const ToolCallCancelledData = z.looseObject({
   tool: z.string(),
   duration_ms: z.number().nonnegative(),
   reason: z.enum(['client_cancelled', 'timeout', 'server_stopping']),
 });
 
-export const ToolCallDeniedData = z.object({
+export const ToolCallDeniedData = z.looseObject({
   tool: z.string(),
   denied_reason: z.enum(['insufficient_scope', 'rate_limited', 'feature_flag']),
   required_scopes: z.array(z.string()).default([]),
@@ -509,7 +551,7 @@ export const ToolCallDeniedData = z.object({
  * `-32602` invalid params, `-32603` internal; `-32020`, `-32021` and `-32022` are reserved
  * for the 2026-07-28 era.
  */
-export const ProtocolErrorData = z.object({
+export const ProtocolErrorData = z.looseObject({
   /** OTel attribute name, kept verbatim from docs/XRAY_EVENT_MODEL.md section 3. */
   'mcp.method.name': z.string().nullable().default(null),
   code: z.int(),
@@ -558,7 +600,7 @@ export const BANK_OPERATIONS = [
 ] as const;
 export type BankOperation = (typeof BANK_OPERATIONS)[number];
 
-export const BankOpData = z.object({
+export const BankOpData = z.looseObject({
   /** `family.verb`, for example `transactions.list` or `transfer.confirm`. */
   operation: z.string().regex(/^[a-z_]+\.[a-z_]+$/),
   /** Masked to the last four characters; full numbers never leave bank-core. */
@@ -592,7 +634,7 @@ export type EtlEvictionReason = z.infer<typeof EtlEvictionReasonSchema>;
 export const EtlLimitSchema = z.enum(['tables', 'ops', 'global_dbs']);
 export type EtlLimit = z.infer<typeof EtlLimitSchema>;
 
-export const EtlLoadData = z.object({
+export const EtlLoadData = z.looseObject({
   table: z.string(),
   rows: z.int().nonnegative(),
   /** Union of keys across all rows, nested keys joined with "__". */
@@ -601,7 +643,7 @@ export const EtlLoadData = z.object({
   duration_ms: z.number().nonnegative(),
 });
 
-export const EtlProcessedData = z.object({
+export const EtlProcessedData = z.looseObject({
   table: z.string(),
   rows: z.int().nonnegative(),
   columns_advertised: z.array(z.string()).default([]),
@@ -609,7 +651,7 @@ export const EtlProcessedData = z.object({
   duration_ms: z.number().nonnegative(),
 });
 
-export const EtlTableEvictedData = z.object({
+export const EtlTableEvictedData = z.looseObject({
   table: z.string(),
   reason: EtlEvictionReasonSchema,
   rows: z.int().nonnegative().nullable().default(null),
@@ -617,7 +659,7 @@ export const EtlTableEvictedData = z.object({
   age_ms: z.number().nonnegative().nullable().default(null),
 });
 
-export const EtlLimitReachedData = z.object({
+export const EtlLimitReachedData = z.looseObject({
   limit: EtlLimitSchema,
   table: z.string().nullable().default(null),
   current: z.int().nonnegative().nullable().default(null),
@@ -625,7 +667,7 @@ export const EtlLimitReachedData = z.object({
   message: z.string().nullable().default(null),
 });
 
-export const EtlWorkerTerminatedData = z.object({
+export const EtlWorkerTerminatedData = z.looseObject({
   reason: EtlEvictionReasonSchema,
   duration_ms: z.number().nonnegative().nullable().default(null),
   table: z.string().nullable().default(null),
@@ -653,7 +695,7 @@ export const SqlRejectedReasonSchema = z.enum([
 ]);
 export type SqlRejectedReason = z.infer<typeof SqlRejectedReasonSchema>;
 
-export const SqlQueryData = z.object({
+export const SqlQueryData = z.looseObject({
   table: z.string().nullable().default(null),
   /** Model-authored SQL, stored verbatim (section 3). */
   sql: z.string(),
@@ -663,12 +705,12 @@ export const SqlQueryData = z.object({
   duration_ms: z.number().nonnegative(),
 });
 
-export const SqlTableClearedData = z.object({
+export const SqlTableClearedData = z.looseObject({
   table: z.string(),
   duration_ms: z.number().nonnegative().nullable().default(null),
 });
 
-export const SqlRejectedData = z.object({
+export const SqlRejectedData = z.looseObject({
   table: z.string().nullable().default(null),
   sql: z.string(),
   rejected_reason: SqlRejectedReasonSchema,
@@ -690,7 +732,7 @@ export const IntentWorkflowSchema = z.enum([
 ]);
 export type IntentWorkflow = z.infer<typeof IntentWorkflowSchema>;
 
-export const IntentDeclaredData = z.object({
+export const IntentDeclaredData = z.looseObject({
   /** The `rationale` verbatim. */
   text: z.string(),
   source: z.literal('rationale'),
@@ -700,7 +742,7 @@ export const IntentDeclaredData = z.object({
   truncated: z.boolean().default(false),
 });
 
-export const IntentInferredData = z.object({
+export const IntentInferredData = z.looseObject({
   workflow: IntentWorkflowSchema,
   confidence: z.number().min(0).max(1),
   source: z.literal('classifier'),
@@ -710,7 +752,7 @@ export const IntentInferredData = z.object({
   tools: z.array(z.string()).default([]),
 });
 
-export const IntentMissingData = z.object({
+export const IntentMissingData = z.looseObject({
   tool: z.string(),
   reason: z.enum(['absent', 'empty', 'wrong_type']),
 });
@@ -730,19 +772,19 @@ export type ViewerKind = z.infer<typeof ViewerKindSchema>;
 export const ViewerFilterSchema = z.enum(['xs', 'login', 'all']);
 export type ViewerFilter = z.infer<typeof ViewerFilterSchema>;
 
-export const XrayPairingCreatedData = z.object({
+export const XrayPairingCreatedData = z.looseObject({
   /** The pairing code, hashed. The plaintext code never enters the event log. */
   code: z.string(),
   login_id: idSchema('login'),
   expires_at: z.iso.datetime(),
 });
 
-export const XrayPairingRejectedData = z.object({
+export const XrayPairingRejectedData = z.looseObject({
   code: z.string().nullable().default(null),
   reason: z.enum(['unknown_code', 'expired', 'rate_limited', 'malformed']),
 });
 
-export const XrayViewerConnectedData = z.object({
+export const XrayViewerConnectedData = z.looseObject({
   viewer_kind: ViewerKindSchema,
   login_id: idSchema('login').nullable().default(null),
   filter: ViewerFilterSchema,
@@ -751,7 +793,7 @@ export const XrayViewerConnectedData = z.object({
   replayed: z.int().nonnegative().default(0),
 });
 
-export const XrayViewerDisconnectedData = z.object({
+export const XrayViewerDisconnectedData = z.looseObject({
   viewer_kind: ViewerKindSchema,
   login_id: idSchema('login').nullable().default(null),
   filter: ViewerFilterSchema,
@@ -759,7 +801,7 @@ export const XrayViewerDisconnectedData = z.object({
   reason: z.enum(['client_closed', 'server_cut', 'backpressure']).default('client_closed'),
 });
 
-export const XrayDroppedData = z.object({
+export const XrayDroppedData = z.looseObject({
   dropped_count: z.int().positive(),
   viewer_kind: ViewerKindSchema.nullable().default(null),
   filter: ViewerFilterSchema.nullable().default(null),
@@ -771,7 +813,7 @@ export const XrayDroppedData = z.object({
  * survives it: a page able to destroy its own evidence with no trace would be worse than one that
  * cannot erase at all (invariant 13).
  */
-export const XrayEventsDeletedData = z.object({
+export const XrayEventsDeletedData = z.looseObject({
   scope: z.enum(['session', 'login']),
   /** The session erased, when `scope` is `session`. */
   xs_deleted: z.string().nullable().default(null),
@@ -983,8 +1025,9 @@ export function parseXrayEventLine(line: string): XrayEvent {
 
 /**
  * What every block receives to report what it did. The real emitter assigns `id`, `ts`, `v` and
- * `seq`, applies redaction, appends to the log and fans out to subscribers; it must never throw
- * and never block the caller (docs/ARCHITECTURE.md section 6).
+ * `seq`, appends the payload to the log as given (v0.9, D-28: no redaction and no truncation on
+ * the way in; the viewer surfaces redact on the way out) and fans out to subscribers; it must
+ * never throw and never block the caller (docs/ARCHITECTURE.md section 6).
  */
 export interface XrayEmitter {
   /**

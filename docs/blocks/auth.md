@@ -30,7 +30,7 @@ Every token is an HS256 JWT signed with `OAUTH_SIGNING_KEY`; the only mutable st
 - `AuthDeps`: `config: AuthConfig` (structural subset of `AppConfig`: `nodeEnv`, `publicBaseUrl`, `publicHosts`, `oauthSigningKey`, `featureFlags`, `maxDcrClients`, `authDbPath`, `cimdEnabled`, `rateLimits`); optional `personas` (`bankCore.personas`), `emitter` (`xray.emitter`), `pairing` (`xray.pairing`), `consentSuccessRedirectMs`, `now`, `log`, `randomId`. Without `emitter` the block logs to stdout instead.
 - `src/contracts`: `OAUTH_ROUTES`, `COOKIE_NAMES`, `TOKEN_LIFETIMES_SECONDS`, the JWT claim schemas, `JwtService`, `VerifyAccessToken`, the callback allowlist, the `PUBLIC_HOSTS` helpers, scopes, `PersonaDirectory`, `Pairing`, `XrayEmitter`. npm: `jose`, `better-sqlite3`, `express`.
 
-## Routes (`routes.ts`; JSON bodies capped at 256 kb; `OPTIONS` preflight on discovery, `/register`, `/token`, `/revoke`)
+## Routes (`routes.ts`; JSON and form bodies capped at 256 kb, their bytes kept by `keepRawBody` for the `raw` block of `http.request`, D-28; `OPTIONS` preflight on discovery, `/register`, `/token`, `/revoke`)
 | Route | Answers |
 |---|---|
 | `GET /.well-known/oauth-protected-resource`, `.../oauth-protected-resource/mcp`, `.../oauth-authorization-server` | the discovery documents; `issuer`, `resource`, `aud` from the validated `Host` (invariant 4); CIMD never advertised (A-37) |
@@ -59,7 +59,7 @@ Every JWT carries `jti` and `typ`; `verify` rejects a wrong `typ` (ADR-4). `code
 - `POST /consent` renders the success page instead of the 302 only when the form sent `show_success=1` (our consent form does; `test/e2e` and CLIs do not): persona id, granted scopes, a `BANK-XXXX-XXXX-XX` link (minted only when `xray:read` was granted; `target=_blank`), then a `<meta refresh>` or JS-countdown redirect; the page carries the code in its link, so it is sent `Referrer-Policy: no-referrer` and `Cache-Control: no-store`.
 
 ## Events owned
-All through `safeEmitter`; `client_id` is always the 12-char SHA-256 fingerprint; no token, code, verifier or `txn` ever appears (invariant 7). `auth.challenge`, `auth.verified`, `auth.stepup.requested` and the bearer-token `auth.rejected` belong to the `src/mcp` gate.
+All through `safeEmitter`; `client_id` is always the 12-char SHA-256 fingerprint; no token, code, verifier or `txn` ever appears in an `auth.*` event (invariant 7). The requests themselves - discovery, `/register` with its whole DCR body, `/authorize`, `/token`, refusals and 429s included - are recorded by the catch-all `http.request` (`mcp.httpObserver`, D-28), raw and uncorrelated. `auth.challenge`, `auth.verified`, `auth.stepup.requested` and the bearer-token `auth.rejected` belong to the `src/mcp` gate.
 - `auth.client.registered` - `POST /register`: `client_id`, `client_name`, `redirect_uris`, `token_endpoint_auth_method`, `application_type`.
 - `auth.client.reconstructed` - `/authorize` on an id unknown to LRU and table: `client_id`, `client_name: 'unknown (reconstructed)'`, `redirect_uris`, `reason: 'unknown_client_after_restart'`.
 - `auth.login.created` - `POST /login` when a new `login_id` is minted: `login_id`, `persona_id`, `expires_at`, `persona_source` (`seeded`/`generated`/`recovered`), `shared_persona`.
@@ -85,6 +85,7 @@ All through `safeEmitter`; `client_id` is always the 12-char SHA-256 fingerprint
 ## Known gaps
 - `parent_grant_id` is always `null`: a re-consent extends the grant (ADR-14); the "new grant with a parent" branch does not exist.
 - Deliberate deviations: an unrecognised `resource` falls back to the canonical MCP URL instead of `invalid_target` (RFC 8707) until a real client's value is observed; refresh-token reuse refuses the replay but does not revoke the family (a public demo's tokens leak from transcripts).
-- The per-IP and per-client 429s emit no X-ray event (stdout `auth.rate_limited` only); only the grant cap emits `auth.rejected {rate_limited}`. `auth.client.reconstructed {evicted_from_lru}` and `auth.token.revoked {grant_revoked, reuse_detected}` are contract values nothing emits.
+- The per-IP and per-client 429s emit no `auth.*` event, only the catch-all `http.request` with status 429 (D-28); the stdout logger is a no-op whenever an emitter is injected, so `auth.metadata_served`, `auth.client.rejected` and `auth.rate_limited` are never printed in a wired server. Only the grant cap emits `auth.rejected {rate_limited}`.
+- `auth.client.registered` keeps five DCR fields; the whole registration body is in the `raw.body` of its `http.request`, not joined to it by any id. `auth.client.reconstructed {evicted_from_lru}` and `auth.token.revoked {grant_revoked, reuse_detected}` are contract values nothing emits.
 - Pairing codes live in `src/xray` memory, so a restart invalidates the link the success page printed.
 - Grant LRU (2000) and `ExpiringSet` capacity (100 000) are constants, not env knobs; `ExpiringSet.forcedEvictions` above zero means a replay window re-opened inside `exp` and is surfaced nowhere. An unknown `client_id` costs one SQLite `SELECT` per `/authorize` or `lookupClient` call.

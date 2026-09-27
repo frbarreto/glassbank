@@ -22,3 +22,23 @@ export const SERVER_INFO = {
   title: 'Glass Bank',
   version: '0.1.0',
 } as const;
+
+/**
+ * The public lane's `instructions` (D-26, docs/TOOL_CATALOG.md section 8). The same points are
+ * repeated in every public tool description, `PUBLIC_LANE_NOTICE` included, because whether a
+ * client forwards `instructions` to the model is unknown (A-05).
+ */
+export const PUBLIC_SERVER_INSTRUCTIONS =
+  'Glass Bank is a fictional bank. This is its public endpoint: no sign-in, and only what the bank publishes - its profile, its products with every plan and price, and its branches. ' +
+  'Go from general to specific: list_products, then get_product, then search_prices; find_branches, then get_branch. ' +
+  'Amounts are integers in minor units (1000 = $10.00). ' +
+  "A customer's own accounts, cards, transactions and transfers are not here: they need the signed-in connector at /mcp on the same host, which the user adds and logs in to. " +
+  'Always fill `rationale` with what the user asked for and why this call serves it. ' +
+  'Every call to this endpoint, rationale included, is shown on a public dashboard, so never put personal details in the arguments or the rationale.';
+
+/** `serverInfo` of the public lane: a separate name, so a client listing its servers can tell them apart. */
+export const PUBLIC_SERVER_INFO = {
+  name: 'glass-bank-public',
+  title: 'Glass Bank (public)',
+  version: '0.1.0',
+} as const;

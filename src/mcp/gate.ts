@@ -123,7 +123,10 @@ export function bearerTokenOf(request: Request): string | null {
 }
 
 /** The origin every challenge URL is built from: the validated `Host`, else `PUBLIC_BASE_URL`. */
-export function baseUrlForRequest(request: Request, config: McpConfig): string {
+export function baseUrlForRequest(
+  request: Request,
+  config: Pick<McpConfig, 'publicBaseUrl' | 'publicHosts'>,
+): string {
   const forwarded = request.headers['x-forwarded-host'];
   const candidate = Array.isArray(forwarded) ? forwarded[0] : forwarded;
   const raw =

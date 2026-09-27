@@ -10,7 +10,7 @@
  * `?fixture=1` swaps the live SSE client for a player over `test/fixtures/events.jsonl`, so the
  * whole UI can be built and driven with no server running.
  */
-import { createApi, readQuery } from './api.js';
+import { PUBLIC_LOGIN_ID, createApi, readQuery } from './api.js';
 import { createStore } from './store.js';
 import { createFixtureSource, createLiveSource } from './stream.js';
 import { parseFilter, toggleToken } from './filters.js';
@@ -76,7 +76,8 @@ const BANK_DEBOUNCE_MS = 300;
 
 const store = createStore();
 const query = readQuery(location.search);
-const api = createApi();
+// `?lane=public` (D-26): every read asks for the public lane and needs no pairing cookie.
+const api = createApi(undefined, { lane: query.lane });
 
 const view = {
   mode: query.fixture ? 'fixture' : 'live',
@@ -580,8 +581,9 @@ let bankTimer = null;
 async function refreshBank() {
   if (view.mode !== 'live' || !view.ready) return;
   const xs = effectiveSessionXs(store, view);
-  if (!xs) {
-    view.bank = { xs: null, payload: null, error: null, fetchedAt: null, busy: false };
+  // An anonymous visitor of the public lane has no persona and no balances to read (D-26).
+  if (!xs || store.getSession(xs)?.login_id === PUBLIC_LOGIN_ID) {
+    view.bank = { xs, payload: null, error: null, fetchedAt: null, busy: false };
     scheduleRender();
     return;
   }
@@ -817,6 +819,19 @@ const actions = {
   },
   reconnect: () => {
     if (source && source.reconnect) source.reconnect();
+  },
+  /** The public lane: anonymous agents on `/public/mcp`, readable by anyone (D-26). */
+  'enter-public-lane': () => {
+    const url = new URL(location.href);
+    url.search = '';
+    url.searchParams.set('lane', 'public');
+    location.href = url.toString();
+  },
+  'leave-public-lane': () => {
+    const url = new URL(location.href);
+    url.searchParams.delete('lane');
+    url.searchParams.delete('xs');
+    location.href = url.toString();
   },
   'enter-fixture': () => {
     const url = new URL(location.href);

@@ -47,6 +47,7 @@ import {
   type Payee,
   type PayeeQuery,
   type Persona,
+  type PublicBankInfo,
   type StatementLine,
   type StatementLineQuery,
   type Transaction,
@@ -67,6 +68,14 @@ import { resolveBankCoreConfig, type BankCoreConfig } from './config.js';
 import { addMinutes, pad, startOfUtcDay, toIsoDate } from './dates.js';
 import { BoundedLru } from './lru.js';
 import { createOverlayStore, type MutableOverlay, type OverlayStore } from './overlays.js';
+import {
+  BANK_PROFILE,
+  branchDetail,
+  findBranchSummaries,
+  productDetail,
+  productFamilies,
+  searchPriceLines,
+} from './public-catalog.js';
 import {
   createPersonaDirectory,
   type BankPersonaDirectory,
@@ -144,6 +153,11 @@ export interface BankCoreStats {
  */
 export interface BankCoreHandle extends BankCore {
   readonly personas: BankPersonaDirectory;
+  /**
+   * v0.7: the published catalog the public lane serves (D-26). Not on `BankCore`: no signed-in
+   * tool reads it, and it needs no persona or scope.
+   */
+  readonly publicInfo: PublicBankInfo;
   /** Balances across every account, overlay applied. */
   getBalances(scope: BankScope): Promise<BalanceSummary>;
   /** `lockOrUnlockCard` with `action: "lock"`. */
@@ -431,6 +445,59 @@ export function createBankCore(deps: BankCoreDeps): BankCoreHandle {
     }
   }
 
+
+  /**
+   * The public lane's reads (D-26). The data is static, so each call only filters it; the
+   * `bank.op` is what shows on the dashboard how deep the agent went (profile, family, product,
+   * price list, city, branch). No persona and no login: the ambient correlation opened by
+   * `src/composition.ts` supplies the visitor's pseudo grant and `PUBLIC_LOGIN_ID`.
+   */
+  const publicInfo: PublicBankInfo = {
+    async profile() {
+      const started = performance.now();
+      emit('public.profile', null, started, { ok: true, rows: 1 });
+      return BANK_PROFILE;
+    },
+    async listProducts(family) {
+      const started = performance.now();
+      const families = productFamilies(family);
+      const rows = families.reduce((total, entry) => total + entry.products.length, 0);
+      emit('public.products', null, started, { ok: true, rows });
+      return families;
+    },
+    async getProduct(productId) {
+      const started = performance.now();
+      const product = productDetail(productId);
+      emit('public.product', null, started, {
+        ok: product !== null,
+        rows: product === null ? 0 : product.plans.length,
+        error: product === null ? 'unknown_product' : null,
+      });
+      return product;
+    },
+    async searchPrices(query) {
+      const started = performance.now();
+      const lines = searchPriceLines(query);
+      emit('public.prices', null, started, { ok: true, rows: lines.length });
+      return lines;
+    },
+    async findBranches(query) {
+      const started = performance.now();
+      const result = findBranchSummaries(query);
+      emit('public.branches', null, started, { ok: true, rows: result.branches.length });
+      return result;
+    },
+    async getBranch(branchId) {
+      const started = performance.now();
+      const branch = branchDetail(branchId);
+      emit('public.branch', null, started, {
+        ok: branch !== null,
+        rows: branch === null ? 0 : 1,
+        error: branch === null ? 'unknown_branch' : null,
+      });
+      return branch;
+    },
+  };
   const core: BankCoreHandle = {
     personas: directory,
 
@@ -1020,6 +1087,8 @@ export function createBankCore(deps: BankCoreDeps): BankCoreHandle {
       const overlay = overlays.peek(personaId, loginId);
       return overlay === undefined ? undefined : overlays.snapshot(overlay);
     },
+
+    publicInfo,
 
     stats() {
       return {

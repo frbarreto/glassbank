@@ -11,6 +11,13 @@
  * generation, no redaction. Those belong to `mcp`, `etl`, `bank-core` and `xray`.
  */
 export { createTools, TOOLS_LIMIT_DEFAULTS } from './registry.js';
+export {
+  createPublicTools,
+  PUBLIC_HANDLERS,
+  type PublicToolHandler,
+  type PublicToolsHandle,
+  type PublicToolsStats,
+} from './public.js';
 
 export {
   availabilityTableFor,

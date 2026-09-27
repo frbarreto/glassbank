@@ -27,6 +27,11 @@
 #      API under /xray/api answers 401 rather than 404 (the container used to carry no public/,
 #      so every tool call handed the user an xray_get_session_link URL that led to a 404); and
 #      the landing page at / answers 200 and names <base>/mcp (a bare domain used to answer 404)
+#  11  the public lane (D-26): POST /public/mcp initializes with no bearer and no challenge, lists
+#      the six public tools and none of the signed-in ones, and /xray/api/me?lane=public answers
+#      200 with no cookie; skipped when /public/mcp answers 404 (PUBLIC_MCP=false)
+#  12  the export (D-27): GET /xray/api/export?lane=public answers 200 as application/x-ndjson with
+#      no credential, and GET /xray/api/export with none answers 401
 #
 # Checks 1, 6 and 7 are skipped when the target is local (localhost / 127.0.0.1 / an http:// URL):
 # a laptop has no public A record and there is no Cloud Run service to describe.
@@ -555,6 +560,62 @@ check_dashboard() {
 }
 
 # ---------------------------------------------------------------------------------------------
+# 11. The public lane (D-26)
+# ---------------------------------------------------------------------------------------------
+check_public_lane() {
+  step "11. The public lane at /public/mcp"
+  local code
+  code="$(http POST "$BASE_URL/public/mcp" \
+    -H 'content-type: application/json' \
+    -H 'accept: application/json, text/event-stream' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"glass-bank-smoke","version":"0.1.0"}}}')"
+  if [ "$code" = "404" ]; then
+    skip "/public/mcp -> 404: the public lane is switched off (PUBLIC_MCP=false)"
+    return
+  fi
+  if [ "$code" = "200" ] && grep -qF '"glass-bank-public"' "$BODY" && [ -z "$(header_value www-authenticate)" ]; then
+    pass "initialize -> 200 with no bearer and no challenge"
+  else
+    fail "initialize -> $code; the public lane must answer 200 without a bearer and without WWW-Authenticate"
+    info "body: $(head -c 300 "$BODY" 2>/dev/null | tr -d '\n')"
+  fi
+
+  code="$(http POST "$BASE_URL/public/mcp" \
+    -H 'content-type: application/json' \
+    -H 'accept: application/json, text/event-stream' \
+    -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}')"
+  if [ "$code" = "200" ] && grep -qF '"search_prices"' "$BODY" && ! grep -qF '"load_accounts"' "$BODY"; then
+    pass "tools/list -> the public tools, none of the signed-in ones"
+  else
+    fail "tools/list -> $code; expected the six public tools and no signed-in tool"
+  fi
+
+  code="$(http GET "$BASE_URL/xray/api/me?lane=public")"
+  if [ "$code" = "200" ] && grep -qF '"lgn_public"' "$BODY"; then
+    pass "/xray/api/me?lane=public -> 200 with no cookie"
+  else
+    fail "/xray/api/me?lane=public -> $code; the public lane of the dashboard is not served"
+  fi
+}
+
+check_export() {
+  step "12. The X-ray export at /xray/api/export"
+  local code
+  code="$(http GET "$BASE_URL/xray/api/export?lane=public")"
+  if [ "$code" = "200" ] && header_value content-type | grep -qF 'application/x-ndjson'; then
+    pass "/xray/api/export?lane=public -> 200 application/x-ndjson with no credential"
+  else
+    fail "/xray/api/export?lane=public -> $code ($(header_value content-type)); expected 200 application/x-ndjson"
+  fi
+  code="$(http GET "$BASE_URL/xray/api/export")"
+  if [ "$code" = "401" ]; then
+    pass "/xray/api/export without a credential -> 401"
+  else
+    fail "/xray/api/export without a credential -> $code; the full log must need the admin token or a viewer cookie"
+  fi
+}
+
+# ---------------------------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------------------------
 main() {
@@ -567,7 +628,7 @@ main() {
 
   if [ "$DRY_RUN" = "1" ]; then
     say ""
-    say "DRY_RUN=1: would run checks 1-10 against $BASE_URL and hosts '$HOSTS'."
+    say "DRY_RUN=1: would run checks 1-11 against $BASE_URL and hosts '$HOSTS'."
     say "Nothing was requested."
     exit 0
   fi
@@ -582,6 +643,8 @@ main() {
   check_discovery_timing
   check_register_rate_limit
   check_dashboard
+  check_public_lane
+  check_export
 
   step "Origin policy"
   if [ -n "$ACTIVE_ORIGIN_POLICY" ]; then

@@ -16,7 +16,7 @@ import express from 'express';
 import type { Express, NextFunction, Request, RequestHandler, Response } from 'express';
 
 import type { AppConfig } from './config/index.js';
-import { canonicalBaseUrl } from './contracts/index.js';
+import { PUBLIC_MCP_PATH, canonicalBaseUrl } from './contracts/index.js';
 
 /** Everything the composition root injects. All optional while the blocks do not exist yet. */
 export interface AppDeps {
@@ -28,6 +28,11 @@ export interface AppDeps {
   readonly authRouter?: RequestHandler;
   /** Mounted at `/mcp` by T0.3+: the bearer gate and the Streamable HTTP transport. */
   readonly mcpRouter?: RequestHandler;
+  /**
+   * Mounted at `PUBLIC_MCP_PATH` (`/public/mcp`, D-26): the sign-in-free lane. Absent when
+   * `PUBLIC_MCP=false`, and then the landing page does not mention it.
+   */
+  readonly publicMcpRouter?: RequestHandler;
   /** Mounted at `/xray` by L6/L7: the pairing landing page, the JSON API and the SSE stream. */
   readonly xrayRouter?: RequestHandler;
   /**
@@ -140,8 +145,20 @@ function escapeHtml(value: string): string {
  * (`canonicalBaseUrl`, invariant 4), so the URL printed here is the PRM `resource` a client will
  * be told. No script, no state, no form. English only.
  */
-export function landingPageHtml(base: string): string {
+export function landingPageHtml(base: string, options: { readonly publicLane?: boolean } = {}): string {
   const b = escapeHtml(base.replace(/\/+$/, ''));
+  const publicSection =
+    options.publicLane === true
+      ? `
+  <section aria-labelledby="browse">
+    <h2 id="browse">Browse without signing in</h2>
+    <p>A second MCP URL answers with no login: the bank's profile, its products with every plan and price, and its branches. Add it as its own connector; anything about a customer still needs the URL above.</p>
+    <code class="url">${b}${PUBLIC_MCP_PATH}</code>
+    <p>Every call to it, with the reason the agent gave, is shown on a public dashboard anyone can open.</p>
+    <p><a class="button secondary" href="${b}/xray/?lane=public">Watch the public lane</a></p>
+  </section>
+`
+      : '';
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -188,7 +205,7 @@ export function landingPageHtml(base: string): string {
     </ol>
     <p>Opening <code>/mcp</code> in a browser answers 405: it speaks MCP over POST only.</p>
   </section>
-
+${publicSection}
   <section aria-labelledby="xray">
     <h2 id="xray">Watch it from the inside</h2>
     <p>The X-ray dashboard shows which tools were listed and called, with their arguments, rationale and results. Once a client is connected, ask it for the X-ray link (the <code>xray_get_session_link</code> tool) to watch your own session live.</p>
@@ -264,7 +281,7 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): Express {
         'referrer-policy': 'no-referrer',
       })
       .type('html')
-      .send(landingPageHtml(base));
+      .send(landingPageHtml(base, { publicLane: deps.publicMcpRouter !== undefined }));
   });
 
   // --- MOUNT POINT: auth (block auth, T0.3 / L5) -----------------------------------------------
@@ -276,6 +293,10 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): Express {
   // The bearer gate runs before the SDK transport; GET and DELETE on /mcp answer 405
   // (CLAUDE.md invariants 5 and 6).
   if (deps.mcpRouter) app.use('/mcp', deps.mcpRouter);
+
+  // --- MOUNT POINT: the public lane (block mcp, D-26) -----------------------------------------
+  // No bearer gate: the six public tools only. Its own JSON parser (256 kb) and its own limits.
+  if (deps.publicMcpRouter) app.use(PUBLIC_MCP_PATH, deps.publicMcpRouter);
 
   // Body parsing is deliberately mounted after `auth` and `mcp`: each of those installs its own
   // parser with its own limit (256 kb and 4 mb), and body-parser skips a request whose body has

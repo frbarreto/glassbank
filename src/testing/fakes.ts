@@ -71,6 +71,11 @@ import type {
   XrayEvent,
   XrayEventDataInput,
   XrayEventType,
+  PublicBankInfo,
+  PublicToolContext,
+  PriceLine,
+  ProductDetail,
+  BranchDetail,
 } from '../contracts/index.js';
 import {
   DEFAULT_FEATURE_FLAGS,
@@ -1483,5 +1488,210 @@ export function bankScopeOf(auth: AuthContext): BankScope {
     persona_id: auth.persona.id,
     login_id: auth.login_id ?? 'lgn_anonymous',
     grant_id: auth.grant_id,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The public lane (contracts v0.7, D-26)
+// ---------------------------------------------------------------------------
+
+/** One product with two plans and three prices, and two locations in one city. */
+export const FAKE_PUBLIC_PRODUCT: ProductDetail = {
+  product_id: 'fake_checking',
+  family: 'accounts',
+  name: 'Fake Checking',
+  summary: 'A checking account for tests.',
+  lowest_monthly_fee_cents: 0,
+  plan_count: 2,
+  description: 'A checking account that exists only in tests.',
+  who_it_is_for: 'Tests.',
+  why_different: 'It is fake.',
+  eligibility: ['A test runner'],
+  needs_sign_in: ['your balance'],
+  plans: [
+    {
+      plan_id: 'fake_checking_free',
+      name: 'Free',
+      monthly_fee_cents: 0,
+      headline: 'No monthly fee',
+      highlights: ['Free'],
+      best_for: 'Everyone',
+    },
+    {
+      plan_id: 'fake_checking_plus',
+      name: 'Plus',
+      monthly_fee_cents: 1000,
+      headline: '$10 a month',
+      highlights: ['Free wires'],
+      best_for: 'Wire senders',
+    },
+  ],
+};
+
+export const FAKE_PUBLIC_PRICES: readonly PriceLine[] = [
+  {
+    price_id: 'fake_checking_free_wire',
+    product_id: 'fake_checking',
+    product_name: 'Fake Checking',
+    plan_id: 'fake_checking_free',
+    plan_name: 'Free',
+    kind: 'transaction_fee',
+    name: 'Outgoing wire',
+    amount_cents: 2500,
+    rate_bps: null,
+    display: '$25.00 per wire',
+    applies: 'per wire',
+    waiver: null,
+  },
+  {
+    price_id: 'fake_checking_plus_monthly',
+    product_id: 'fake_checking',
+    product_name: 'Fake Checking',
+    plan_id: 'fake_checking_plus',
+    plan_name: 'Plus',
+    kind: 'monthly_fee',
+    name: 'Monthly maintenance',
+    amount_cents: 1000,
+    rate_bps: null,
+    display: '$10.00 every month',
+    applies: 'every month',
+    waiver: 'Keep $1,000',
+  },
+  {
+    price_id: 'fake_checking_plus_rate',
+    product_id: 'fake_checking',
+    product_name: 'Fake Checking',
+    plan_id: 'fake_checking_plus',
+    plan_name: 'Plus',
+    kind: 'rate',
+    name: 'Interest',
+    amount_cents: null,
+    rate_bps: 100,
+    display: '1.00% on the balance',
+    applies: 'on the balance',
+    waiver: null,
+  },
+];
+
+export const FAKE_PUBLIC_BRANCH: BranchDetail = {
+  branch_id: 'spr_main',
+  name: 'Main Street',
+  city: 'Springfield',
+  state: 'IL',
+  kind: 'branch',
+  services: ['tellers', 'atm_24h'],
+  address: '1 Main Street, Springfield, IL 62701',
+  time_zone: 'America/Chicago',
+  open_24_hours: false,
+  hours: [
+    { day: 'monday', opens: '09:00', closes: '17:00' },
+    { day: 'tuesday', opens: '09:00', closes: '17:00' },
+    { day: 'wednesday', opens: '09:00', closes: '17:00' },
+    { day: 'thursday', opens: '09:00', closes: '17:00' },
+    { day: 'friday', opens: '09:00', closes: '17:00' },
+    { day: 'saturday', opens: null, closes: null },
+    { day: 'sunday', opens: null, closes: null },
+  ],
+  atm_count: 1,
+  accessibility: 'Step-free.',
+  languages: ['English'],
+  notes: 'A test branch.',
+};
+
+/** `PublicBankInfo` over the three fixtures above; records every call it answers. */
+export interface FakePublicBankInfo extends PublicBankInfo {
+  readonly calls: string[];
+}
+
+export function createFakePublicBankInfo(): FakePublicBankInfo {
+  const calls: string[] = [];
+  const summary = {
+    product_id: FAKE_PUBLIC_PRODUCT.product_id,
+    family: FAKE_PUBLIC_PRODUCT.family,
+    name: FAKE_PUBLIC_PRODUCT.name,
+    summary: FAKE_PUBLIC_PRODUCT.summary,
+    lowest_monthly_fee_cents: FAKE_PUBLIC_PRODUCT.lowest_monthly_fee_cents,
+    plan_count: FAKE_PUBLIC_PRODUCT.plan_count,
+  };
+  const branchSummary = {
+    branch_id: FAKE_PUBLIC_BRANCH.branch_id,
+    name: FAKE_PUBLIC_BRANCH.name,
+    city: FAKE_PUBLIC_BRANCH.city,
+    state: FAKE_PUBLIC_BRANCH.state,
+    kind: FAKE_PUBLIC_BRANCH.kind,
+    services: FAKE_PUBLIC_BRANCH.services,
+  };
+  return {
+    calls,
+    async profile() {
+      calls.push('profile');
+      return {
+        name: 'Glass Bank',
+        tagline: 'A fake tagline.',
+        purpose: 'Tests.',
+        differentiators: [{ title: 'Fake', detail: 'It is fake.' }],
+        headquarters: 'Springfield, Illinois',
+        fictional: true,
+        public_information: ['products'],
+        needs_sign_in: ['accounts and balances'],
+      };
+    },
+    async listProducts(family) {
+      calls.push(`listProducts:${family ?? ''}`);
+      if (family !== undefined && family !== 'accounts') {
+        return [{ family, name: family, summary: 'Nothing yet.', products: [] }];
+      }
+      return [{ family: 'accounts', name: 'Everyday accounts', summary: 'Checking.', products: [summary] }];
+    },
+    async getProduct(productId) {
+      calls.push(`getProduct:${productId}`);
+      return productId === FAKE_PUBLIC_PRODUCT.product_id ? FAKE_PUBLIC_PRODUCT : null;
+    },
+    async searchPrices(query) {
+      calls.push('searchPrices');
+      const words = (query.text ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+      return FAKE_PUBLIC_PRICES.filter(
+        (line) =>
+          (query.product_id === undefined || line.product_id === query.product_id) &&
+          (query.plan_id === undefined || line.plan_id === query.plan_id) &&
+          (query.kind === undefined || line.kind === query.kind) &&
+          (query.max_amount_cents === undefined ||
+            (line.amount_cents !== null && line.amount_cents <= query.max_amount_cents)) &&
+          words.every((word) => line.name.toLowerCase().includes(word)),
+      );
+    },
+    async findBranches(query) {
+      calls.push('findBranches');
+      const city = (query.city ?? '').trim().toLowerCase();
+      const matches =
+        (city === '' || city === 'springfield') &&
+        (query.service === undefined || FAKE_PUBLIC_BRANCH.services.includes(query.service));
+      return { cities: ['Springfield'], branches: matches ? [branchSummary] : [] };
+    },
+    async getBranch(branchId) {
+      calls.push(`getBranch:${branchId}`);
+      return branchId === FAKE_PUBLIC_BRANCH.branch_id ? FAKE_PUBLIC_BRANCH : null;
+    },
+  };
+}
+
+export interface FakePublicToolContext extends PublicToolContext {
+  readonly info: FakePublicBankInfo;
+  readonly xray: FakeXrayEmitter;
+}
+
+/** A `PublicToolContext` for a visitor's pseudo grant, over the fake catalog and a fake emitter. */
+export function createFakePublicToolContext(
+  overrides: Partial<Omit<PublicToolContext, 'info' | 'xray'>> = {},
+): FakePublicToolContext {
+  return {
+    info: createFakePublicBankInfo(),
+    xray: createFakeXrayEmitter(),
+    now: () => FAKE_NOW,
+    requestId: '7',
+    publicBaseUrl: 'https://glassbank.example',
+    grantId: 'grt_pub_0123456789ab',
+    xs: 'xs_pub_1',
+    ...overrides,
   };
 }

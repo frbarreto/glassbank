@@ -15,6 +15,7 @@ import type {
   XraySessionEventsResponse,
   XraySessionSummary,
   XraySessionsResponse,
+  XrayExportQuery,
   XrayStreamFrame,
   XrayStreamQuery,
 } from '../../src/contracts/index.js';
@@ -28,6 +29,7 @@ import {
   SSE_HEADERS,
   SSE_HEARTBEAT_MS,
   SSE_RETRY_MS,
+  XRAY_EXPORT_CONTENT_TYPE,
   XRAY_ROUTES,
   XrayEventSchema,
   renderStreamFrame,
@@ -59,6 +61,7 @@ describe('the X-ray HTTP read model', () => {
       stream: '/xray/api/stream',
       healthz: '/healthz',
       health: '/health',
+      export: '/xray/api/export',
     });
   });
 
@@ -90,6 +93,15 @@ describe('the X-ray HTTP read model', () => {
     const byLogin: XrayStreamQuery = { login: 'me' };
     const observer: XrayStreamQuery = { all: '1' };
     expect([bySession.xs, byLogin.login, observer.all]).toEqual(['xs_3f1c9a', 'me', '1']);
+  });
+
+  it('types the export as a stream scope plus a cursor, answered in the fixture line format (v0.8)', () => {
+    const incremental: XrayExportQuery = { all: '1', after: 200 };
+    const publicLane: XrayExportQuery = { lane: 'public' };
+    expect([incremental.after, publicLane.lane]).toEqual([200, 'public']);
+    expect(XRAY_EXPORT_CONTENT_TYPE).toBe('application/x-ndjson; charset=utf-8');
+    // One stored envelope per line: every fixture line is what an export line looks like.
+    expect(XrayEventSchema.safeParse(JSON.parse(fixture[0] as string)).success).toBe(true);
   });
 
   it('types the sessions envelope the way Ramp paginates', () => {

@@ -91,6 +91,19 @@ export function renderConnectScreen(model) {
         { class: 'connect-note' },
         'The code is bound to your login, not to a single connection, so re-consenting, reconnecting or re-adding the connector keeps this page alive.',
       ),
+      h('h2', { class: 'connect-sub' }, 'Or watch the public lane'),
+      h(
+        'p',
+        { class: 'connect-lead' },
+        'Agents that browse the bank without signing in - its products, prices and branches, through ',
+        h('code', { class: 'mono' }, '/public/mcp'),
+        ' - show up here live, with the reason each one gave. No code needed: those agents were told their calls are public.',
+      ),
+      h(
+        'div',
+        { class: 'pair-actions' },
+        button('Watch the public lane', 'enter-public-lane', { variant: 'primary' }),
+      ),
       view.adminOpen
         ? h(
             'form',
@@ -180,6 +193,15 @@ export function renderViewerChip(model) {
   }
   const viewer = view.viewer;
   if (!viewer) return h('div', { class: 'viewer-chip' }, tag('not paired', 'tag-quiet'));
+  if (viewer.viewer_kind === 'public') {
+    return h(
+      'div',
+      { class: 'viewer-chip is-public' },
+      tag('public lane', 'tag-strong'),
+      h('span', { class: 'viewer-detail' }, 'anonymous agents, read-only'),
+      button('Leave the public lane', 'leave-public-lane', { variant: 'quiet' }),
+    );
+  }
   return h(
     'div',
     { class: 'viewer-chip' },

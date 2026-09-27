@@ -12,12 +12,12 @@ run against the built artefact (`node dist/server.js`). If 8080 is taken, use an
 
 | Command | Expected |
 |---|---|
-| `npm run check` | tsc clean, eslint clean, 1296 tests in 60 files (includes `public/__tests__`) |
+| `npm run check` | tsc clean, eslint clean, 1446 tests in 65 files (includes `public/__tests__`) |
 | `npm run build` | `tsc -p tsconfig.build.json` writes `dist/server.js`, what the container runs |
-| `npm run e2e` | `e2e:oauth` 55 checks (port 8899) + `e2e:session` 96 checks (port 8897) = 151; each spawns its own `tsx src/server.ts` with private SQLite files |
+| `npm run e2e` | `e2e:oauth` 55 checks (port 8899) + `e2e:session` 96 checks (port 8897) + `e2e:public` 23 checks (port 8896, the export included) = 174; each spawns its own `tsx src/server.ts` with private SQLite files |
 | `npm run e2e:dashboard` | 28 checks (port 8095, boots `dist/server.js`, so build first): the whole OAuth walk, nine tool calls including a write, then headless Chrome paired to that session asserting the chain (one line per call, a call opening into REQUEST / INSIDE / RESPONSE, every party named), the persona card and the erase. Needs Chrome; `SHOTS=<dir>` also writes screenshots |
 | `npm run smoke:worker-sqlite` | 6/6, exit 0: `worker.terminate()` cannot stop native SQLite, the forked runner plus `SIGKILL` can (ADR-9, A-39) |
-| `npx vitest run src/<block>` | one block against `src/testing/fakes.ts`; `npx vitest run public` is the 280 dashboard tests |
+| `npx vitest run src/<block>` | one block against `src/testing/fakes.ts`; `npx vitest run public/__tests__` is the 286 dashboard tests |
 
 ## 3. Start the server
 
@@ -52,6 +52,20 @@ The 401 with `WWW-Authenticate` starts OAuth in every MCP client; a `200` here b
 (CLAUDE.md invariant 5). `resource` and `issuer` follow the request `Host` only when it is listed in
 `PUBLIC_HOSTS`; any other host, a forged `Host: evil.example.com` included, gets `PUBLIC_BASE_URL`
 (invariant 4). `GET` and `DELETE /mcp` answer 405 (invariant 6).
+
+The public lane (D-26) answers the same request with no bearer and no challenge, and serves the six
+public tools (`docs/TOOL_CATALOG.md` section 8):
+
+```bash
+pub() { curl -s -X POST http://localhost:8080/public/mcp -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' -d "$1"; }
+pub '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+# 200, serverInfo {"name":"glass-bank-public",...}, instructions ending "...never put personal details in the arguments or the rationale."
+pub '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_prices","arguments":{"plan_id":"clear_checking_plus","query":"wire","rationale":"wire fees"}}}'
+# {"count":2,"prices":[{"name":"Outgoing domestic wire","amount_cents":0,...},{"name":"Outgoing domestic wire after the free ones","amount":"1500 cents ($15.00)",...}],"next":[...]}
+```
+
+Then open `http://localhost:8080/xray/?lane=public`: no code, the anonymous sessions only (section 8).
 
 ## 5. Log in
 
@@ -172,16 +186,31 @@ curl -s -N -b /tmp/xray.cookies -H 'accept: text/event-stream' "http://localhost
 Without the cookie every `/xray/api/*` route answers 401 and there is no session picker (invariant
 11); `POST /xray/api/pair {"code":...}` is the same exchange for the code box, and `POST /xray/api/admin
 {"token":...}` with `XRAY_ADMIN_TOKEN` opens the redacted observer view. `http://localhost:8080/xray/?fixture=1`
-replays `test/fixtures/events.jsonl` with no server traffic (`&rate=100` speeds it up). Dashboard
-checks: `npx vitest run public` (280 tests) and `node public/_dev/check-console.mjs` (headless Chrome
+replays `test/fixtures/events.jsonl` with no server traffic (`&rate=100` speeds it up).
+`http://localhost:8080/xray/?lane=public` (or "Watch the public lane" on the pairing screen) shows the
+anonymous callers of `/public/mcp` with no cookie, read-only; `curl -s
+"http://localhost:8080/xray/api/sessions?lane=public"` is the same over HTTP. Dashboard
+checks: `npx vitest run public/__tests__` (286 tests) and `node public/_dev/check-console.mjs` (headless Chrome
 on an auto-assigned DevTools port, `CDP_PORT` pins it; interrupting the run still kills Chrome and
 removes its profile).
+
+Keep a copy (D-27): `GET /xray/api/export` answers the same events as JSONL, one per line, oldest
+first, verbatim; `?after=<id>` returns only what is newer than a previous file's last line. The
+Sessions panel's "Download log (JSONL)" is the same request.
+
+```bash
+curl -s -b /tmp/xray.cookies -o my-login.jsonl http://localhost:8080/xray/api/export     # your login
+curl -s -o public.jsonl "http://localhost:8080/xray/api/export?lane=public"               # the public lane, no cookie
+XRAY_ADMIN_TOKEN=local-only-admin-token-at-least-32-chars npm run dev                     # then, for everything:
+XRAY_ADMIN_TOKEN=local-only-admin-token-at-least-32-chars ./infra/export.sh http://localhost:8080   # -> exports/xray-localhost-<stamp>.jsonl
+sqlite3 /tmp/xray.sqlite "select id, ts, type, xs from events order by id"                # or read XRAY_DB_PATH directly
+```
 
 ## 9. Run the container
 
 ```bash
 docker compose -f infra/local/docker-compose.yml up --build   # infra/Dockerfile, NODE_ENV=production, port ${HOST_PORT:-8080}
-bash infra/smoke.sh http://localhost:8080                     # 24 passed, 0 failed, 3 skipped (checks 1, 6, 7 need public DNS or gcloud)
+bash infra/smoke.sh http://localhost:8080                     # 29 passed, 0 failed, 3 skipped (checks 1, 6, 7 need public DNS or gcloud)
 docker compose -f infra/local/docker-compose.yml down -v      # also drops the SQLite files on the mcp-bank-data volume
 ```
 

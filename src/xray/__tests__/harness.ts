@@ -74,6 +74,7 @@ export interface HarnessOptions {
   readonly pairFailuresPerMinute?: number;
   readonly maxStreamsPerLogin?: number;
   readonly maxStreams?: number;
+  readonly maxPublicStreams?: number;
   readonly maxLogRows?: number;
 }
 
@@ -99,6 +100,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     rateLimits: { ipPairFailuresPerMin: options.pairFailuresPerMinute ?? 5 },
     xrayMaxStreamsPerLogin: options.maxStreamsPerLogin ?? 4,
     xrayMaxStreams: options.maxStreams ?? 64,
+    xrayMaxPublicStreams: options.maxPublicStreams ?? 16,
   };
   const errors: { error: unknown; where: string }[] = [];
   const xray = createXray({

@@ -1,6 +1,6 @@
 # xray
 
-Status: done; built by `src/composition.ts` (`createXray`), mounted at `/xray`, its `emitter` injected into every producer; contracts v0.5.
+Status: done; built by `src/composition.ts` (`createXray`), mounted at `/xray`, its `emitter` injected into every producer; contracts v0.8 (the public lane readable with `?lane=public`, D-26; the log downloadable as JSONL at `/xray/api/export`, D-27).
 
 ## Purpose
 The server half of the X-ray: the `XrayEmitter` every block writes to, the redaction pipeline, the ring buffer and SQLite log, the SSE stream, the JSON read model, pairing codes and the viewer cookie.
@@ -16,14 +16,14 @@ Every path is wrapped: an X-ray failure degrades the dashboard, never a request.
 | `log.ts` | SQLite WAL log at `XRAY_DB_PATH` (`auto_vacuum=INCREMENTAL`): replay, history, retention, `reclaim()`; becomes a null log after 5 consecutive failures. |
 | `read-model.ts` | Sessions, grants, logins and catalog snapshots (LRUs of 2,000 / 2,000 / 2,000 / 200); `matchesScope` is the visibility authority. |
 | `sse.ts` | `openSseStream`: subscribe, flush, replay, drain - synchronous, so no gap and no duplicate; heartbeat; bounded per-subscriber queue. |
-| `routes.ts` | Every route below; JSON bodies capped at 32 kb. |
+| `routes.ts` | Every route below; JSON bodies capped at 32 kb; the stream budget shared by the SSE streams and the export; the export's paged JSONL writer (`EXPORT_PAGE_ROWS`). |
 | `pairing.ts` | `Pairing`: mints and exchanges `BANK-XXXX-XXXX-XX`; the admin-token exchange. |
-| `viewer.ts` | Issues and reads the viewer cookie; `resolveScope` turns cookie plus query into one `XrayViewerScope`. |
+| `viewer.ts` | Issues and reads the viewer cookie; `resolveScope` turns cookie plus query into one `XrayViewerScope`; `wantsPublicLane` and `publicLaneViewer` (the cookie-less `public` reader, D-26). |
 | `rate-limit.ts`, `bounded.ts` | Fixed-window failure limiter and `BoundedLru`; own copies because blocks may not import each other. |
 | `types.ts` | `XrayConfig` (a structural subset of `AppConfig`), `XrayStats`, `PersonaLookup`, `ViewerIdentity`. |
 
 ## Public interface (`src/xray/index.ts`)
-- `createXray(deps: XrayDeps): Xray`. `XrayDeps`: `config` (`publicBaseUrl`, `xrayDbPath`, `xrayRetentionHours`, `xrayMaxLogRows`, `xrayAdminToken`, `rateLimits.ipPairFailuresPerMin`, `xrayMaxStreamsPerLogin`, `xrayMaxStreams`), `jwt` (`auth.jwt`), `bootId`; optional `version`, `gitSha`, `sdk`, `nodeVersion`, `now`, `lookupPersona`, `onError`, `emitServerStarted`, `heartbeatMs`, `retentionIntervalMs`, `installSignalHandlers`.
+- `createXray(deps: XrayDeps): Xray`. `XrayDeps`: `config` (`publicBaseUrl`, `xrayDbPath`, `xrayRetentionHours`, `xrayMaxLogRows`, `xrayAdminToken`, `rateLimits.ipPairFailuresPerMin`, `xrayMaxStreamsPerLogin`, `xrayMaxStreams`, `xrayMaxPublicStreams`), `jwt` (`auth.jwt`), `bootId`; optional `version`, `gitSha`, `sdk`, `nodeVersion`, `now`, `lookupPersona`, `onError`, `emitServerStarted`, `heartbeatMs`, `retentionIntervalMs`, `installSignalHandlers`.
 - `Xray`: `emitter`, `router`, `pairing`, `readModel`, `log`, `ring`, `stats()`, `flush()`, `runRetention()`, `shutdown(reason?)`.
 - Also exported: `RESTORE_WINDOW`, `RETENTION_INTERVAL_MS`, `applyObserverRedaction`, `redactEventData`, `ipPrefixOf`, `isAnthropicEgress`, `maskToLastFour`, `shortHash`; types `XrayConfig`, `XrayStats`, `PersonaLookup`, `ViewerIdentity`, `ReadModel`, `SessionRow`, `EventLog`.
 
@@ -42,9 +42,12 @@ Every path is wrapped: an X-ray failure degrades the dashboard, never a request.
 | `GET /xray/api/sessions/:xs/events?after=&limit=` | cookie | Flushes the queue first; `limit` default 200, max 500; observer redaction for an admin cookie. |
 | `GET /xray/api/catalog?xs=` | cookie | The latest snapshot; 400 without `xs`, 404 without a snapshot. |
 | `GET /xray/api/stream` | cookie | SSE; `?xs=` / `?login=me` / `?all=1`. |
+| `GET /xray/api/export?after=` | cookie, or `Authorization: Bearer <XRAY_ADMIN_TOKEN>` | v0.8 (D-27): JSONL (`application/x-ndjson`), `Content-Disposition: attachment; filename="glass-bank-xray-<UTC stamp>.jsonl"`, `Cache-Control: no-store`. Every event the scope may read with `id > after`, oldest first, up to the newest id when the request arrived; verbatim, no observer redaction even for an admin. Same scope switches as `stream`. A wrong bearer -> 403, counted on the pairing limiter (429 once spent); no credential -> 401. |
 | anything else under `/xray/api` | - | 404 `{error, message}`. `/xray/`, the modules and `/xray/fixtures/*` fall through to `dashboard`. |
 
 Scope: a pairing cookie sees its own login only (`all=1` -> 403, another login's `xs` -> 403); an admin cookie sees everything (`login=me` -> 400).
+
+The public lane (v0.7, D-26): `?lane=public` on `me`, `sessions`, `sessions/:xs`, `sessions/:xs/events`, `sessions/:xs/bank`, `catalog` and `stream` needs no cookie and ignores one, so a browser can keep a paired tab beside a public one. The reader is `viewer_kind: 'public'` bound to `PUBLIC_LOGIN_ID`: it sees the anonymous visitors of `/public/mcp` and nothing else (another login's `xs` -> 403, `all=1` -> 403), both `DELETE` routes answer 403, and events come verbatim (no observer redaction) because every public tool told the agent its calls are shown publicly. Its streams and exports count against `XRAY_MAX_PUBLIC_STREAMS` (16), inside `XRAY_MAX_STREAMS`. `me` answers `{viewer_kind: 'public', login_id: 'lgn_public', grant_ids, persona: null}`.
 
 ## Consumes
 `src/contracts` (events, `xray-api`, `Pairing`, `JwtService`, `COOKIE_NAMES`, `TOKEN_LIFETIMES_SECONDS`, `getTool` for deny-lists), the injected `JwtService`, `lookupPersona` (`bankCore.personas.get`), `better-sqlite3`. Imports no other block.
@@ -62,26 +65,30 @@ Scope: a pairing cookie sees its own login only (`all=1` -> 403, another login's
 - `remote_ip` never stored, only a `/24` (IPv6 `/48`) prefix and `anthropic_egress`; pairing codes hashed; results previewed at 2,048 chars; `rationale` and SQL verbatim (`rationale` capped at 8,192); one event at most 64,000 chars, strings 16,384, depth 12, 500 items, 200 keys.
 - The cycle guard is ancestor-scoped: a sub-object shared by several siblings (the catalog's `rationale` property) is walked every time; only a reference back to an ancestor is stored as `[circular]`. The real catalog with one published descriptor per row round-trips unchanged inside the 64,000-char budget (29,355 chars with an empty `_meta`, 31,220 with it populated).
 - Observer mode (admin cookie): arguments hidden and `rationale` cut to 80 chars, applied at read time on the stream and on `/sessions/:xs/events`.
+- Export (D-27): `pipeline.flush()` first, then pages of 1,000 rows (`EXPORT_PAGE_ROWS`) through `log.readAfter` with the stream's coarse SQL filter and `matchesScope` as the authority, or `ring.after` when the log is degraded. The upper bound is `log.maxId()` at the start, so a busy server cannot keep an export open. The loop yields with `setImmediate` between pages and waits for `drain`, so the event loop is never held and the log is never buffered whole. An export holds one slot of the stream budget (`XRAY_MAX_STREAMS`, and `XRAY_MAX_STREAMS_PER_LOGIN` or `XRAY_MAX_PUBLIC_STREAMS`) until it ends, and `shutdown()` cuts it like a stream. The bearer path calls `pairing.exchangeAdminToken` (constant time) and shares `RATE_LIMIT_IP_PAIR_FAILURES`.
 
 ## Invariants held here
-- 11: viewers see only their login's grants, no session picker, arguments verbatim except the deny-list, IP as a prefix, observer mode redacted harder.
+- 11: viewers see only their login's grants, no session picker, arguments verbatim except the deny-list, IP as a prefix, observer mode redacted harder; the public lane is the one login anyone may read, and it holds only the anonymous calls of `/public/mcp` (D-26); the export follows the same scopes but is verbatim for the admin too, the operator's copy of the log (D-27).
 - 13 (under 5): `emit` never throws and never blocks a producer; a broken log degrades the X-ray, never a tool call.
 - 3 and 12: 20 s heartbeat, `Last-Event-ID` replay, every stream closed and the queue flushed inside `shutdown()`; the cookie is `Secure` + `HttpOnly`.
-- 14: pairing failures rate-limited; every collection bounded (ring bytes, write queue, subscriber queue, LRUs, stream caps).
+- 14: pairing and admin-bearer failures rate-limited; every collection bounded (ring bytes, write queue, subscriber queue, LRUs, stream caps, which also bound the exports).
 - 7: tokens, codes, verifiers, `txn` and viewer JWTs never reach the log, by key name and by the JWT pattern.
 
 ## How to test
 ```
-npx vitest run src/xray               # 91 tests, 7 files: redaction, emitter, log, pairing, read-model, api, sse
+npx vitest run src/xray               # 106 tests, 9 files: redaction, emitter, log, pairing, read-model, api, sse, public-lane, export
 npx eslint src/xray
 ```
 The tests build their own `JwtService` in `__tests__/harness.ts`; `test/import-boundaries.test.ts` forbids importing `src/auth` or `src/testing`.
 
 ## Known gaps
-- An erase is permanent and immediate: there is no undo, no soft delete and no snapshot, so a viewer who clears its history cannot get it back.
+- An erase is permanent and immediate: there is no undo and no soft delete. Only an export taken beforehand keeps a copy.
+- An export emits no event, like every other read route, so the log does not show who downloaded it.
+- Nothing reads an export back in: the dashboard's `?fixture=1` replays only `test/fixtures/events.jsonl`, although an export uses the same line format.
 - `GET /xray/api/sessions` has no cursor; the read model keeps at most 2,000 sessions.
 - Pairing codes live in memory: a restart invalidates them (the viewer cookie does not).
-- Only the pairing and admin exchanges are rate-limited; the read routes rely on the cookie and the stream caps.
+- Only the pairing and admin exchanges are rate-limited; the read routes rely on the cookie and the stream caps, and the public lane's reads on nothing but the stream cap (they are in-memory reads of public data).
+- A public reader's own `xray.viewer.connected` / `disconnected` land in the public lane, so every reader sees the others arrive.
 - `?last_event_id=` is honoured by `sse.ts` but is absent from `XrayStreamQuery`, and the dashboard never sends it.
 - `XRAY_ROUTES.assets` (`/xray/assets`) has no directory behind it; `public/` is flat.
 - The bare-number mask is a Luhn filter, so about one random long number in ten is masked too.

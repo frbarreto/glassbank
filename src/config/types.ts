@@ -20,6 +20,10 @@ export interface RateLimitConfig {
   readonly clientTokenPer15Min: number;
   /** tools/call requests per grant per minute. */
   readonly grantToolCallsPerMin: number;
+  /** Public lane (D-26): tools/call per IP prefix per minute. */
+  readonly publicIpToolCallsPerMin: number;
+  /** Public lane (D-26): tools/call per minute across every anonymous visitor. */
+  readonly publicToolCallsPerMin: number;
   /** New grants per login_id per day. */
   readonly loginGrantsPerDay: number;
 }
@@ -36,6 +40,8 @@ export interface AppConfig {
   readonly originPolicy: OriginPolicy;
   /** Parsed FEATURE_FLAGS; `writes` and `transfers` are on by default (Decision D-3). */
   readonly featureFlags: readonly string[];
+  /** `PUBLIC_MCP`: serve the sign-in-free endpoint at `/public/mcp` (D-26); on by default. */
+  readonly publicMcp: boolean;
 
   /** HS256 signing key. Never log this value (CLAUDE.md invariant 7). */
   readonly oauthSigningKey: string;
@@ -52,6 +58,8 @@ export interface AppConfig {
   readonly xrayMaxStreamsPerLogin: number;
   /** Concurrent SSE streams the whole process may hold open. */
   readonly xrayMaxStreams: number;
+  /** Concurrent SSE streams of the public lane, every reader together (D-26). */
+  readonly xrayMaxPublicStreams: number;
 
   readonly authDbPath: string;
   readonly maxDcrClients: number;

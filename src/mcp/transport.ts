@@ -57,7 +57,7 @@ import type { CatalogMemory } from './catalog-memory.js';
 import type { JsonRpcSummary } from './gate.js';
 import type { InFlightCall, InFlightCalls } from './in-flight.js';
 import { SERVER_INFO, SERVER_INSTRUCTIONS } from './instructions.js';
-import type { ToolContextBase } from './types.js';
+import type { ToolCallBase } from './types.js';
 import { catalogRowsOf, emitWithId, summariseResult } from './xray.js';
 
 /**
@@ -72,11 +72,7 @@ import { catalogRowsOf, emitWithId, summariseResult } from './xray.js';
 export interface ToolPort {
   readonly catalog: readonly ToolCatalogEntry[];
   listFor(grant: GrantView, flags: readonly FeatureFlag[]): ToolCatalogSnapshot;
-  call(
-    name: string,
-    args: Record<string, unknown>,
-    context: ToolContextBase,
-  ): Promise<ToolResult>;
+  call(name: string, args: Record<string, unknown>, context: ToolCallBase): Promise<ToolResult>;
 }
 
 /** Opens one tool call in the register and returns the function that closes it. */
@@ -98,9 +94,14 @@ export interface TransportDeps {
   readonly now?: () => Date;
 }
 
-/** Everything the per-request server needs to answer for one authenticated caller. */
+/** Everything the per-request server needs to answer for one caller. */
 export interface TransportRequestContext {
-  readonly auth: AuthContext;
+  /** `null` on the public lane, whose caller is anonymous (D-26). */
+  readonly auth: AuthContext | null;
+  /** The grant the listing, the catalog memory and the counters are keyed on (a pseudo grant on the public lane). */
+  readonly grantId: string;
+  /** What the listing rule reads: the grant's scopes, or none on the public lane. */
+  readonly grant: GrantView;
   readonly featureFlags: readonly FeatureFlag[];
   readonly requestId: string | null;
   readonly publicBaseUrl: string;
@@ -271,11 +272,8 @@ export function createTransport(deps: TransportDeps): McpTransport {
     );
 
     server.setRequestHandler(ListToolsRequestSchema, () => {
-      const snapshot = deps.tools.listFor(
-        { scopes: context.auth.scopes, auth_level: context.auth.auth_level },
-        context.featureFlags,
-      );
-      const decision = deps.catalogMemory.decide(context.auth.grant_id, snapshot.content_hash);
+      const snapshot = deps.tools.listFor(context.grant, context.featureFlags);
+      const decision = deps.catalogMemory.decide(context.grantId, snapshot.content_hash);
       const id = emitWithId(
         context.xray,
         'catalog.tools_listed',
@@ -292,7 +290,7 @@ export function createTransport(deps: TransportDeps): McpTransport {
         context.correlation,
       );
       if (decision.changed) {
-        deps.catalogMemory.remember(context.auth.grant_id, snapshot.content_hash, id);
+        deps.catalogMemory.remember(context.grantId, snapshot.content_hash, id);
       }
       return { tools: snapshot.listed.map(publishedToolDescriptor) };
     });
@@ -344,13 +342,15 @@ export function createTransport(deps: TransportDeps): McpTransport {
         },
         context.correlation,
       );
-      deps.counters?.noteCall(context.auth.grant_id);
+      deps.counters?.noteCall(context.grantId);
       const finish = track({ tool: name, startedAt, correlation: context.correlation });
 
       let result: ToolResult;
       try {
         result = await deps.tools.call(name, args, {
           auth: context.auth,
+          grantId: context.grantId,
+          xs: context.correlation.xs ?? null,
           xray: context.xray,
           featureFlags: context.featureFlags,
           now,
@@ -360,7 +360,7 @@ export function createTransport(deps: TransportDeps): McpTransport {
       } catch (error) {
         finish();
         const message = error instanceof Error ? error.message : 'the tool handler threw';
-        deps.counters?.noteError(context.auth.grant_id);
+        deps.counters?.noteError(context.grantId);
         context.xray.emit(
           'tool.call.completed',
           {
@@ -384,7 +384,7 @@ export function createTransport(deps: TransportDeps): McpTransport {
 
       const summary = summariseResult(result);
       const isError = result.isError === true;
-      if (isError) deps.counters?.noteError(context.auth.grant_id);
+      if (isError) deps.counters?.noteError(context.grantId);
       context.xray.emit(
         'tool.call.completed',
         {

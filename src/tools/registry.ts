@@ -55,7 +55,8 @@ export const TOOLS_LIMIT_DEFAULTS: ToolsLimits = {
   maxPagesPerLoad: 100,
 };
 
-function validationMessage(
+/** The tool error for arguments the lenient schema refused; shared with `public.ts`. */
+export function validationMessage(
   name: string,
   issues: readonly { readonly path: readonly PropertyKey[]; readonly message: string }[],
 ): string {

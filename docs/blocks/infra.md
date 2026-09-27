@@ -17,8 +17,9 @@ The `gcloud run deploy` flags live in `deploy.sh` and nowhere else; the other sc
 | `infra/domain.sh` | D-25: `gcloud beta run domain-mappings create` for `DOMAIN` (default `glassbank-mcp.abovethefog.app`) in `lake-fraude`, then the one CNAME record in Cloud DNS zone `abovethefog-app` (project `abovethefog`); refuses the apex and `www`; `status` prints certificate provisioning; `DRY_RUN=1`. |
 | `infra/observe.sh` | Email notification channel, uptime check `glass-bank-health` on `/health` every 5 minutes, alert policy after 10 minutes of failures (`docs/DEPLOYMENT.md` section 17); idempotent; `DRY_RUN=1`. Ran for real on 2026-09-26. |
 | `infra/pause.sh` | `pause` disables the uptime alert policy and deletes the service (stops the bill); `resume` redeploys the newest Artifact Registry image (or `RESUME_TAG`) through `deploy.sh`, which follows the domain mapping, and re-enables the alert; `make pause` / `make resume`; `DRY_RUN=1`. The pipeline skips a push deploy while the service is absent. |
+| `infra/export.sh [BASE_URL]` | D-27: downloads `GET /xray/api/export` into `exports/xray-<host>-<UTC stamp>[-<query>].jsonl` (git-ignored) and prints the event count and the last id (the next `after=`). The admin token comes from `XRAY_ADMIN_TOKEN`, else from Secret Manager `mcp-bank-admin-token`; it reaches curl on stdin, never argv or disk. `EXPORT_QUERY='lane=public'` needs no token. `make xray-export` runs it against the live hostname; `DRY_RUN=1`. |
 | `infra/deploy.sh` | Cloud Build into Artifact Registry `lake-fraude`, `gcloud run deploy` with the canonical flags, then the `status.url` / `PUBLIC_HOSTS` correction. |
-| `infra/smoke.sh [BASE_URL]` | Ten checks: DNS, no cross-host redirect, the 401 challenge, discovery on every host, `/health`, Cloud Run invariants, public IAM, discovery latency, 30x `/register` without a 429, dashboard served. |
+| `infra/smoke.sh [BASE_URL]` | Twelve checks: DNS, no cross-host redirect, the 401 challenge, discovery on every host, `/health`, Cloud Run invariants, public IAM, discovery latency, 30x `/register` without a 429, dashboard served, the public lane (`/public/mcp` with no bearer and no challenge, its six tools, `/xray/api/me?lane=public`; skipped on a 404, D-26), the export (`/xray/api/export?lane=public` as `application/x-ndjson` with no credential, 401 without one, D-27). |
 | `infra/local/docker-compose.yml` | The production image on the Mac with `NODE_ENV=production`, every knob as an env passthrough, SQLite on a named volume, 1 CPU / 1 GiB, a `/health` probe, 15 s stop grace. |
 | `infra/local/cloudflared.md` | Exposing `localhost:8080` over HTTPS: `cloudflared tunnel --url http://localhost:8080`, then restart with the tunnel host in `PUBLIC_BASE_URL` and `PUBLIC_HOSTS`. |
 
@@ -31,6 +32,7 @@ The `gcloud run deploy` flags live in `deploy.sh` and nowhere else; the other sc
 - `infra/domain.sh [status]`: `PROJECT_ID`, `REGION`, `SERVICE`, `DOMAIN` (glassbank-mcp.abovethefog.app; not `HOSTNAME`, which bash pre-sets to the machine name), `DNS_PROJECT` (abovethefog), `DNS_ZONE` (abovethefog-app), `TTL` (300), `EXPECT_ACCOUNT`, `DRY_RUN=1`. No `make` target.
 - `infra/observe.sh`: `PROJECT_ID`, `PROJECT_NUMBER`, `REGION`, `SERVICE`, `HOST` (the deterministic `run.app` host), `ALERT_EMAIL` (default: the active gcloud account; never printed or stored), `CHECK_NAME`, `CHANNEL_NAME`, `POLICY_NAME`, `EXPECT_ACCOUNT`, `DRY_RUN=1`. No `make` target.
 - `infra/pause.sh pause|resume` (`make pause` / `make resume`): `PROJECT_ID`, `REGION`, `SERVICE`, `AR_REPO`, `RESUME_TAG`, `POLICY_NAME`, `DRY_RUN=1`, plus everything `deploy.sh` reads on resume.
+- `infra/export.sh [BASE_URL]` (`make xray-export`): `EXPORT_BASE_URL` (default `https://glassbank-mcp.abovethefog.app`), `EXPORT_QUERY` (`lane=public`, `after=<id>`, `xs=<id>`), `EXPORT_DIR` (`exports/`), `XRAY_ADMIN_TOKEN`, `PROJECT_ID`, `ADMIN_TOKEN_SECRET` (mcp-bank-admin-token), `CURL_TIMEOUT` (300), `DRY_RUN=1`. A local target needs `XRAY_ADMIN_TOKEN` or `lane=public`.
 - `.github/workflows/pipeline.yml`: repository variables `GCP_PROJECT_ID`, `GCP_WIF_PROVIDER`, `GCP_DEPLOYER_SA`, `PUBLIC_BASE_URL`; `workflow_dispatch` inputs `image_tag` (redeploy an existing tag) and `origin_policy`.
 - `infra/smoke.sh` (`make smoke`): a positional base URL or `SMOKE_BASE_URL` (default: the live `status.url`), `SMOKE_HOSTS`, `CURL_TIMEOUT` (15), `DISCOVERY_BUDGET_S` (10), `REGISTER_ATTEMPTS` (30), `DRY_RUN=1`; exit 1 on any failure; checks 1, 6 and 7 are skipped for a local or `http://` target.
 - `docker compose -f infra/local/docker-compose.yml up --build`: `HOST_PORT`, `PUBLIC_BASE_URL`, `PUBLIC_HOSTS`, `OAUTH_SIGNING_KEY`, `XRAY_ADMIN_TOKEN` and every `src/config` knob.
@@ -53,13 +55,14 @@ None.
 DRY_RUN=1 ./infra/deploy.sh                    # exit 0: prints the build, deploy and correction commands, creates nothing
 DRY_RUN=1 ./infra/bootstrap.sh                 # prints every gcloud command
 DRY_RUN=1 ./infra/smoke.sh                     # resolves the target and exits 0 without a request
-bash infra/smoke.sh http://localhost:8080      # against a running server: 24 passed, 0 failed, 3 skipped
+bash infra/smoke.sh http://localhost:8080      # against a running server: 29 passed, 0 failed, 3 skipped
 bash infra/smoke.sh https://<tunnel-host>      # the tunnel; checks 6 and 7 describe the Cloud Run service and say nothing about the tunnel
 docker compose -f infra/local/docker-compose.yml up --build   # the shipped image, NODE_ENV=production
 DRY_RUN=1 ./infra/ci-bootstrap.sh              # prints the deployer service account commands
 DRY_RUN=1 ./infra/pause.sh pause               # prints the delete; `resume` prints the redeploy of the newest image
 DRY_RUN=1 ./infra/domain.sh                    # prints the mapping and the CNAME commands; `status` prints the certificate state
 DRY_RUN=1 ./infra/observe.sh                   # prints the channel, uptime check and alert policy commands
+DRY_RUN=1 ./infra/export.sh                    # prints the Secret Manager read and the download; with a URL and XRAY_ADMIN_TOKEN it downloads for real
 ruby -ryaml -e 'YAML.load_file(".github/workflows/pipeline.yml")'   # the workflow parses
 git push origin main                           # runs the pipeline: check, e2e, image, deploy + smoke; follow with `gh run watch`
 ```
@@ -71,4 +74,5 @@ The cloud path has run only through the pipeline (`SKIP_BUILD=1`); `make deploy 
 - The local image is arm64; Cloud Build produces amd64 from the same Dockerfile, untested locally.
 - `--platform=managed` is a hidden, default flag in current gcloud.
 - `smoke.sh` needs `jq` for strict JSON assertions; without it array checks are substring matches.
+- `export.sh` has run only against a local server (2026-09-26); the Secret Manager path and the live hostname have not.
 - `make resume` recreates the service, so Cloud Run's revision numbering restarts at `00001` and `/health` shows a new `boot_id`; nothing depends on either.

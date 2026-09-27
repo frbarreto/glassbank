@@ -1,13 +1,13 @@
 # tools
-Status: done, contracts v0.5, wired in `src/composition.ts` (`createTools()` is injected into `createMcp` as `registry`, wrapped in an `AsyncLocalStorage` so a `bank.op` emitted inside `bank-core` carries the call's `xs`).
+Status: done, contracts v0.7, wired in `src/composition.ts` (`createTools()` is injected into `createMcp` as `registry`, and `createPublicTools()` as `publicLane.registry`, each wrapped in an `AsyncLocalStorage` so a `bank.op` emitted inside `bank-core` carries the call's `xs`).
 
 ## Purpose
-The seventeen handlers of `docs/TOOL_CATALOG.md` as pure functions of `(ToolCallContext, args)`, plus what surrounds a call: the `rationale` rule (ADR-8, A-06), the listing rule and availability table (ADR-13), the intent classifier and the `isError` wrapper (A-08).
+The seventeen handlers of `docs/TOOL_CATALOG.md` as pure functions of `(ToolCallContext, args)`, the six public ones of its section 8 as pure functions of `(PublicToolContext, args)`, plus what surrounds a call: the `rationale` rule (ADR-8, A-06), the listing rule and availability table (ADR-13), the intent classifier and the `isError` wrapper (A-08).
 No HTTP, transport, SQL, bank logic or redaction here; those belong to `mcp`, `etl`, `bank-core` and `xray`.
 
 ## Files
 - `index.ts` - the public exports.
-- `registry.ts` - `createTools`, `TOOLS_LIMIT_DEFAULTS`, the per-call sequence below.
+- `registry.ts` - `createTools`, `TOOLS_LIMIT_DEFAULTS`, the per-call sequence below, `validationMessage` (shared with `public.ts`).
 - `types.ts` - `ToolCallContext`, `ToolCallHandler`, `ToolsDeps`, `ToolsHandle`, `ToolsLimits`, `ToolsStats`, `AvailabilityTable`, `ANONYMOUS_LOGIN_ID`.
 - `rationale.ts` - `readRationale`, `stripRationale`, `emitIntent`, `correlationOf`, `describeToolCall` (the `tool.call.started` fields `mcp` takes from here).
 - `availability.ts` - `catalogContentHash` (sha256 of the listed entries plus flags, 16 hex chars), `listedFor`, `snapshotFor`, `availabilityTableFor`.
@@ -19,10 +19,12 @@ No HTTP, transport, SQL, bank logic or redaction here; those belong to `mcp`, `e
 - `errors.ts` - `describeFailure`, `describeScratchError` (one recovery message per `ScratchDbFailureReason`), `TOO_MANY_PAGES_MESSAGE`, `RELOAD_AFTER_TEARDOWN`.
 - `format.ts` - `formatMoney` (`1000 cents ($10.00)`), `toJson`, the content-cap check.
 - `bounded.ts` - `BoundedMap`, the recency-ordered bounded map behind previews and classifier history.
+- `public.ts` - `createPublicTools` (the `PublicToolRegistry` of `/public/mcp`, D-26) and `PUBLIC_HANDLERS`: compact JSON plus `next`, the call one level deeper or the signed-in connector at `<base>/mcp`.
 - `handlers/index.ts` (`createHandlers` assembles the map and throws if a catalog name has no handler), `handlers/load.ts`, `database.ts`, `meta.ts`, `reference.ts`, `writes.ts`, `xray.ts` - the handlers (table below).
 
 ## Public interface (`src/tools/index.ts`)
 - `createTools(deps?: ToolsDeps): ToolsHandle` - `ToolsHandle` is the contract's `ToolRegistry` (`catalog`, `listFor`, `call`) plus `registry`, `handlers`, `availabilityFor(grant, flags?)`, `stats()`, `reset()`.
+- `createPublicTools(): PublicToolsHandle` - the contract's `PublicToolRegistry` (`catalog`, `list`, `call`) plus `handlers` and `stats()` (`calls`, `errors`); `PUBLIC_HANDLERS`; types `PublicToolHandler`, `PublicToolsHandle`, `PublicToolsStats`.
 - `TOOLS_LIMIT_DEFAULTS` - `maxOpenPreviews` 200, `maxIntentSessions` 500, `intentHistoryLength` 8, `loadPageSize` 500, `maxPagesPerLoad` 100.
 - `availabilityTableFor`, `catalogContentHash`, `listedFor`, `snapshotFor`, `correlationOf`, `describeToolCall`, `emitIntent`, `readRationale`, `stripRationale`, `classifyIntent`, `createIntentClassifier`.
 - `createHandlers`, `createLoadHandlers`, `createTransferHandler`, `createWriteHandlers`, `DATABASE_HANDLERS`, `META_HANDLERS`, `REFERENCE_HANDLERS`, `XRAY_HANDLERS`.
@@ -56,6 +58,17 @@ No HTTP, transport, SQL, bank logic or redaction here; those belong to `mcp`, `e
 | `create_transfer` | `handlers/writes.ts` | Without `confirm`: `bank.previewTransfer`, refuse a `blocked` outlook, remember the preview. With `confirm`: require `expected_total_amount` and a matching open preview, then `bank.confirmTransfer`; `repriced` re-remembers the new quote and returns a tool error; success forgets the preview. |
 | `xray_get_session_link` | `handlers/xray.ts` | `pairing.createCode({login_id})`; a grant with `login_id: null` is refused. |
 
+## The six public tools (`public.ts`, D-26)
+The same sequence as above minus scopes, flags and the classifier (its workflows describe a customer's own data): `intent.declared` / `intent.missing` under the visitor's pseudo grant and `PUBLIC_LOGIN_ID`, the lenient schema, the handler, a throw turned into a tool error. `""` means no filter on every optional argument.
+| Tool | Reads | Answer |
+|---|---|---|
+| `get_bank_profile` | `info.profile` | The profile plus `endpoints` (`public_mcp`, `signed_in_mcp`, `public_dashboard`) built from the request's host |
+| `list_products` | `info.listProducts(family)` | Families with products, each `lowest_monthly_fee` as `formatMoney` |
+| `get_product` | `info.getProduct` | Plans with `monthly_fee`; `next` names `search_prices` and the signed-in connector; an unknown id is a tool error listing the known ones |
+| `search_prices` | `info.getProduct` (validates `product_id`), `info.searchPrices` | `count`, `prices` with `amount`; `max_amount` in cents (D-1); no match is a success whose `next` says which filter to drop |
+| `find_branches` | `info.findBranches` | `cities` always, `branches`; no match names the cities served |
+| `get_branch` | `info.getBranch` | Address, hours, services, ATMs; `next` points a banker or appointment at the signed-in connector |
+
 ## The intent classifier (`intent.ts`)
 Scores five workflows (`spend_analysis`, `card_control`, `payment`, `balance_check`, `exploration`) from `TOOL_WEIGHTS` over the session's last `intentHistoryLength` tools (the current tool counts double) plus 1.5 per matched `RATIONALE_PATTERNS` family.
 `confidence = 0.4 + 0.45 x margin`, clamped to `[0.4, 0.95]`; nothing scoring is `unknown` at 0.2; ties break on the fixed workflow order.
@@ -79,7 +92,7 @@ Every event carries `correlationOf(auth, requestId)`: `xs`, `login_id`, `grant_i
 
 ## How to test
 ```
-npx vitest run src/tools    # 128 tests, 9 files, about 0.6 s
+npx vitest run src/tools    # 136 tests, 10 files, about 0.6 s
 ```
 `__tests__/fakes.ts` is a byte-for-byte copy of `src/testing/fakes.ts` (the import rules allow this block only `src/contracts`); `fakes-are-a-copy.test.ts` fails if they drift.
 
@@ -87,4 +100,5 @@ npx vitest run src/tools    # 128 tests, 9 files, about 0.6 s
 - `memo` reaches `bank.previewTransfer` only; `bank-core` writes `memo: null` on the confirmed transfer, so a memo never lands on `Transfer.memo`.
 - `src/testing/fakes.ts` `bankScopeOf` still maps a `login_id: null` grant to `lgn_anonymous`, unlike `scope.ts`; the `ANONYMOUS_LOGIN_ID` comment in `types.ts` describes that old rule.
 - `intent.inferred` is emitted inside `call()`, so it precedes the `tool.call.completed` that `mcp` emits; `test/fixtures/events.jsonl` records the opposite order.
+- Public calls emit `intent.declared` / `intent.missing` but never `intent.inferred`: the classifier's five workflows are about a customer's own data.
 - The classifier is keyword-based and English-only; a rationale in another language (Codex sent Portuguese) contributes nothing and the label rests on the tool sequence.

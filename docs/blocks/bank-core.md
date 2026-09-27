@@ -1,6 +1,6 @@
 # bank-core
 
-Status: done, contracts v0.5, wired in `src/composition.ts` (`createBankCore({ emitter, config })` is built first; `bankCore.personas` goes to `auth` and to `mcp`'s `lookupPersona`; the handle is `ToolContext.bank`; its emitter merges the ambient `AsyncLocalStorage` correlation so `bank.op` carries the call's `xs`).
+Status: done, contracts v0.7, wired in `src/composition.ts` (`createBankCore({ emitter, config })` is built first; `bankCore.personas` goes to `auth` and to `mcp`'s `lookupPersona`; the handle is `ToolContext.bank`; `bankCore.publicInfo` feeds the public lane; its emitter merges the ambient `AsyncLocalStorage` correlation so `bank.op` carries the call's `xs`).
 
 ## Purpose
 The fictional bank: a deterministic seed dataset per persona, a copy-on-write overlay per login for every write, Ramp-style paged reads, and the card and transfer operations of `src/contracts/bank.ts`.
@@ -17,12 +17,13 @@ Pure TypeScript: no HTTP, MCP, SQL or tokens; everything time- or randomness-dep
 - `names.ts` - merchant, recurring-charge, income, payee, employee and reason vocabularies; every merchant pinned to a category id.
 - `config.ts` - `BankCoreConfig`, `DEFAULT_BANK_CORE_CONFIG`, `resolveBankCoreConfig`, `WIRE_FEE_CENTS` 2500.
 - `lru.ts` - `BoundedLru` with `onEvict`.
+- `public-catalog.ts` - the published half (D-26): `BANK_PROFILE`, six products in three families with every plan and price (`productFamilies`, `productDetail`, `searchPriceLines`), eight locations in four cities (`findBranchSummaries`, `branchDetail`, `BRANCH_CITIES`). Hand-written, fictional down to the street names, immutable.
 - `dates.ts` - UTC-only date helpers; `withinDateRange` is inclusive on both ends.
 - `random.ts` - mulberry32 over FNV-1a; `moneyCents` rounds to plausible prices.
 
 ## Public interface (`src/bank-core/index.ts`)
 - `createBankCore(deps: BankCoreDeps): BankCoreHandle` - `deps = { emitter, config?, now?, personas?, randomSeed?, historyDays? }`.
-- `BankCoreHandle` - the contract's `BankCore` plus `personas` (`BankPersonaDirectory`), `getBalances(scope)`, `lockCard`, `unlockCard`, `resetOverlays()`, `peekOverlay(personaId, loginId)`, `stats()`.
+- `BankCoreHandle` - the contract's `BankCore` plus `personas` (`BankPersonaDirectory`), `publicInfo` (`PublicBankInfo`, v0.7), `getBalances(scope)`, `lockCard`, `unlockCard`, `resetOverlays()`, `peekOverlay(personaId, loginId)`, `stats()`.
 - Types `BalanceSummary`, `AccountBalance`, `BankCoreStats`, `BankCoreDeps`, `BankCoreConfig`; class `UnknownPersonaError`.
 - `DEFAULT_BANK_CORE_CONFIG`, `WIRE_FEE_CENTS`, `generateDataset`, `HISTORY_DAYS`, `tokenFor`, `SHARED_PERSONAS`, `createPersonaDirectory`, `personaForSeed`, `BANK_CATEGORIES`, `BANK_CURRENCIES`, `BASE_CURRENCY`, `quoteTransfer`, `feeForRail`, `DAILY_LIMIT_MULTIPLIER`, `encodeCursor`, `decodeCursor`.
 
@@ -57,10 +58,19 @@ Balances are seeded numbers; `available_balance_cents` subtracts pending card ho
 - `previewTransfer` -> `invalid_amount`, `unknown_account` (also a same-account destination), `account_closed`, `currency_not_supported` (USD only), `unknown_payee`, `payee_inactive`, `over_limit` (per-transfer limit, or the daily allowance of 3 x limit), `insufficient_funds`. `policy_outlook.status` is `ok` or `warning`, never `blocked`.
 - `confirmTransfer` -> `unknown_preview` (unknown, another login or another persona), `expired_preview`, `repriced` (`expected_total_amount` mismatch, or a total that changed on re-quote; carries `preview`), plus any preview reason from the re-quote. Success debits the source, credits an internal destination, appends the transfer and an audit entry.
 
+## The published catalog (`public-catalog.ts`, D-26)
+| Level | Content |
+|---|---|
+| Profile | Purpose, four differentiators, headquarters, what is public and what needs a sign-in; `fictional: true` |
+| Families and products | `accounts` (`clear_checking`, `glass_savings`), `cards` (`prism_debit`, `lens_credit`), `business` (`pane_business_checking`, `frame_business_card`); each summary carries `lowest_monthly_fee_cents` and `plan_count` |
+| Plans | Two per product, twelve in all, each with `monthly_fee_cents`, a headline, highlights and who it is best for |
+| Prices | 49 lines: `kind` (`monthly_fee`, `annual_fee`, `transaction_fee`, `service_fee`, `rate`, `penalty`), either `amount_cents` or `rate_bps` (never both), `display`, `applies`, `waiver`; `price_id` = plan id + name slug; `searchPriceLines` narrows by product, plan, kind, every word of `text` and `max_amount_cents` (which drops rates) |
+| Locations | Austin, Chicago, New York, San Francisco, two each: `branch`, `studio` (advice, no cash) or `atm_lobby` (always open); seven days of hours, services, ATM count, languages |
+
 ## Events owned
 `bank.op` - one per operation, success or failure: `operation`, `account_id` / `card_id` (masked to `****` + last 4 chars), `pages` (1 on a read), `rows`, `latency_ms`, `ok`, `audit_id`, `preview_id` (only when well formed), `error` (the failure reason or the thrown message).
-Operations: `accounts.list`, `cards.list`, `transactions.list`, `transfers.list`, `bills.list`, `payees.list`, `statement_lines.list`, `audit.list`, `categories.list`, `currencies.list`, `balances.get`, `persona.get`, `card.lock`, `card.unlock`, `transfer.preview`, `transfer.confirm`, `overlay.reset` (dataset eviction, overlay eviction, TTL reset; the cause is in `error`).
-Correlation: `persona_id`, `login_id`, `grant_id` from the `BankScope`; `xs` is merged in by the composition root.
+Operations: `accounts.list`, `cards.list`, `transactions.list`, `transfers.list`, `bills.list`, `payees.list`, `statement_lines.list`, `audit.list`, `categories.list`, `currencies.list`, `balances.get`, `persona.get`, `card.lock`, `card.unlock`, `transfer.preview`, `transfer.confirm`, `overlay.reset` (dataset eviction, overlay eviction, TTL reset; the cause is in `error`), and the public lane's `public.profile`, `public.products`, `public.product`, `public.prices`, `public.branches`, `public.branch` (`rows` = what came back; an unknown id is `ok: false` with `unknown_product` / `unknown_branch`).
+Correlation: `persona_id`, `login_id`, `grant_id` from the `BankScope`; `xs` is merged in by the composition root. A public read carries no scope: the visitor's pseudo grant, `PUBLIC_LOGIN_ID` and `xs` all come from the ambient correlation.
 
 ## Invariants held here
 - Same seed, same dataset: `generateDataset` reads no clock, `Math.random` or environment; `seed.test.ts` pins a SHA-256 per shared persona.
@@ -73,7 +83,7 @@ Correlation: `persona_id`, `login_id`, `grant_id` from the `BankScope`; `xs` is 
 
 ## How to test
 ```
-npx vitest run src/bank-core   # 97 tests, 4 files, about 1 s
+npx vitest run src/bank-core   # 105 tests, 5 files, about 1 s
 npx eslint src/bank-core
 ```
 `__tests__/harness.ts` is a recording emitter that validates every event against `XrayEventSchema`. Changing the generator changes the golden digests in `seed.test.ts`; recompute them on purpose.

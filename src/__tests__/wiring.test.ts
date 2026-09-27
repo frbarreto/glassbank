@@ -8,7 +8,9 @@
  *   1. the auth router answers at the root, before /mcp swallows anything;
  *   2. /mcp is reachable and its bearer gate runs (401 with the documented body and challenge);
  *   3. /xray serves the X-ray JSON API, and the dashboard's static files behind it;
- *   4. mounting the blocks does not shadow /healthz or the 404 handler.
+ *   4. mounting the blocks does not shadow /healthz or the 404 handler;
+ *   5. /public/mcp answers without a bearer from the real catalog, and a public read's `bank.op`
+ *      lands in the visitor's session under `PUBLIC_LOGIN_ID` (D-26).
  *
  * Without this test, a mis-wiring in `src/server.ts` would only be caught by `npm run e2e`.
  */
@@ -16,6 +18,7 @@ import type { AddressInfo } from 'node:net';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { PUBLIC_LOGIN_ID, isPublicGrantId } from '../contracts/index.js';
 import { createGlassBank } from '../composition.js';
 import { loadConfig } from '../config/index.js';
 
@@ -159,6 +162,60 @@ describe('the xray router and the dashboard are mounted at /xray', () => {
       const response = await fetch(`${baseUrl}${path}`);
       expect(response.status, path).toBe(404);
     }
+  });
+});
+
+describe('the public lane is mounted at /public/mcp (D-26)', () => {
+  async function publicRpc(body: unknown): Promise<Record<string, unknown>> {
+    const response = await fetch(`${baseUrl}/public/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify(body),
+    });
+    expect(response.status).toBe(200);
+    return (await response.json()) as Record<string, unknown>;
+  }
+
+  it('lists the six public tools to a caller with no bearer', async () => {
+    const body = await publicRpc({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    const tools = (body.result as { tools: { name: string }[] }).tools;
+    expect(tools.map((tool) => tool.name)).toEqual([
+      'get_bank_profile',
+      'list_products',
+      'get_product',
+      'search_prices',
+      'find_branches',
+      'get_branch',
+    ]);
+  });
+
+  it('answers search_prices from bank-core and files its bank.op in the visitor session', async () => {
+    const body = await publicRpc({
+      jsonrpc: '2.0',
+      id: 7,
+      method: 'tools/call',
+      params: {
+        name: 'search_prices',
+        arguments: { plan_id: 'clear_checking_plus', kind: 'monthly_fee', rationale: 'fees' },
+      },
+    });
+    const text = (body.result as { content: { text: string }[] }).content[0]?.text ?? '';
+    expect(JSON.parse(text)).toMatchObject({ count: 1, prices: [{ amount: '1200 cents ($12.00)' }] });
+
+    glassBank.xray.flush();
+    const op = glassBank.xray.ring
+      .last(500)
+      .find((event) => event.type === 'bank.op' && event.data.operation === 'public.prices');
+    expect(op?.login_id).toBe(PUBLIC_LOGIN_ID);
+    expect(isPublicGrantId(op?.grant_id)).toBe(true);
+    expect(op?.xs).toMatch(/^xs_/);
+    expect(op?.request_id).toBe('7');
+  });
+
+  it('prints the public URL on the landing page', async () => {
+    const html = await (await fetch(`${baseUrl}/`)).text();
+    expect(html).toContain('http://127.0.0.1:8080/public/mcp');
+    expect(html).toContain('/xray/?lane=public');
   });
 });
 

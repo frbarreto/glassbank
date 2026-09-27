@@ -1,6 +1,30 @@
 # Contract change log
 
-Version log for `src/contracts` (`auth.ts`, `bank.ts`, `events.ts`, `scopes.ts`, `tools.ts`, `xray-api.ts`, re-exported by `index.ts`), newest first. The contract is append-only: names are added, never renamed or removed in v1. Namespaces: `A-xx` assumption and `D-x` user decision (`docs/ASSUMPTIONS.md`), `ADR-x` architecture decision (`docs/ARCHITECTURE.md` section 9).
+Version log for `src/contracts` (`auth.ts`, `bank.ts`, `events.ts`, `scopes.ts`, `tools.ts`, `xray-api.ts`, `public.ts`, re-exported by `index.ts`), newest first. The contract is append-only: names are added, never renamed or removed in v1. Namespaces: `A-xx` assumption and `D-x` user decision (`docs/ASSUMPTIONS.md`), `ADR-x` architecture decision (`docs/ARCHITECTURE.md` section 9).
+
+## v0.8 - 2026-09-26 - the export
+
+| Change | File | Producer / consumer |
+|---|---|---|
+| `XRAY_ROUTES.export = '/xray/api/export'` | `xray-api.ts` | `xray` serves it; `public/api.js` links to it (`exportUrl`), `infra/export.sh` and `infra/smoke.sh` call it |
+| `XRAY_EXPORT_CONTENT_TYPE = 'application/x-ndjson; charset=utf-8'` | `xray-api.ts` | `xray` sets it; the body is the line format of `test/fixtures/events.jsonl` |
+| `XrayExportQuery` = `XrayStreamQuery` plus `after?: number` | `xray-api.ts` | `xray` reads it; `after` is the last id of a previous export |
+
+Why: D-27. The event log lives in `/tmp`, which Cloud Run keeps in memory, so every restart, push to `main` and `make pause` erases it (invariant 1); `GET /xray/api/export` gives the whole log one event per line, so it can be kept first. Its scopes are the stream's: `?lane=public` needs no credential, a pairing cookie gets its own login, the admin cookie gets everything. The admin token also works as `Authorization: Bearer`, so a single `curl` is enough. The export is verbatim for every reader, admin included: it is the operator's copy of the log. The observer view on the dashboard stays redacted (invariant 11). Additive: no event type, route or field changed.
+
+## v0.7 - 2026-09-26 - the public lane
+
+| Change | File | Producer / consumer |
+|---|---|---|
+| `PUBLIC_MCP_PATH = '/public/mcp'`, `PUBLIC_LOGIN_ID = 'lgn_public'`, `PUBLIC_GRANT_PREFIX = 'grt_pub_'`, `isPublicGrantId`, `PUBLIC_LANE_NOTICE` | `public.ts` (new) | `src/mcp/public-lane.ts` mints the pseudo grant and files every event under the pseudo login; `src/tools/public.ts` and every public tool description carry the notice; the dashboard copies the login id (`public/api.js`) |
+| The published data types and `PublicBankInfo {profile, listProducts, getProduct, searchPrices, findBranches, getBranch}`; `PRODUCT_FAMILIES`, `PRICE_KINDS`, `BRANCH_KINDS`, `BRANCH_SERVICES` | `public.ts` | `bank-core` implements it as `BankCoreHandle.publicInfo`; `tools` reads it through `PublicToolContext.info` |
+| Six catalog entries (`GET_BANK_PROFILE`, `LIST_PRODUCTS`, `GET_PRODUCT`, `SEARCH_PRICES`, `FIND_BRANCHES`, `GET_BRANCH`), `PUBLIC_TOOL_CATALOG`, `PUBLIC_TOOL_NAMES`, `PublicToolName`, `getPublicTool`, `PublicToolContext`, `PublicToolRegistry` | `public.ts` | `tools` (`createPublicTools`), `mcp` (the lane's `tools/list` and `tools/call`) |
+| `buildPublishedInputSchema`, `buildLenientInputSchema`: the two ADR-8 schema builders, exported | `tools.ts` | `public.ts` |
+| Six `BANK_OPERATIONS` members `public.profile`, `public.products`, `public.product`, `public.prices`, `public.branches`, `public.branch` | `events.ts` | `bank-core` emits them; the dashboard shows them in a call's INSIDE column |
+| `ViewerKindSchema` member `public` | `events.ts` | `xray` (`publicLaneViewer`, the scope, `xray.viewer.*`); never carried by a viewer cookie (`ViewerClaimsSchema` is unchanged) |
+| `PUBLIC_LANE_QUERY = { lane: 'public' }` and `lane?: 'public'` on `XrayStreamQuery` | `xray-api.ts` | `xray` answers every read route with `?lane=public` without a cookie; `public/api.js` adds it to every read |
+
+Why: D-26. Agents may browse what the bank publishes without signing in, and the X-ray shows that traffic to anyone. Two URLs rather than one, because a client that connects without a challenge decides the server needs no auth, and no client has been observed turning a later 401 into a login (A-47, ADR-19). Additive: `/mcp`, its 401 and its 403 step-up are unchanged (invariant 5); the lane never challenges. The pseudo grant keeps invariant 6 (everything keyed on a grant) true for anonymous callers.
 
 ## v0.6 - 2026-09-26 - the health path
 

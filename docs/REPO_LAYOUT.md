@@ -18,14 +18,14 @@ mcp_bank/
     observations/  claude-ai.md        what real clients sent
     tasks/         TEMPLATE.md         ticket template for a new task
   src/
-    contracts/     auth.ts bank.ts events.ts scopes.ts tools.ts xray-api.ts index.ts   FROZEN, append-only
+    contracts/     auth.ts bank.ts events.ts scopes.ts tools.ts xray-api.ts public.ts index.ts   FROZEN, append-only
     testing/       fakes.ts            in-memory fake of every contract interface
     config/        index.ts types.ts errors.ts      env parsing (block: app)
     app.ts  composition.ts  server.ts  composition root (block: app)
     auth/          mock OAuth 2.1 AS, verifier, login and consent pages, DCR table
-    mcp/           bearer gate, SDK transport, tool registration, xs sessions, instrumentation
-    tools/         handlers/, registry, args, scope, availability, intent, previews
-    bank-core/     seed, personas, overlays, queries, transfers, categories
+    mcp/           bearer gate, SDK transport, tool registration, xs sessions, instrumentation, http (shared), public-lane
+    tools/         handlers/, registry, public (the six public tools), args, scope, availability, intent, previews
+    bank-core/     seed, personas, overlays, queries, transfers, categories, public-catalog
     etl/           scratch-db, runner-pool, sql-runner (forked), sql-text guard, rows
     xray/          emitter, ring, log (SQLite), sse, routes, pairing, viewer, redaction
     __tests__/     app.test.ts wiring.test.ts
@@ -43,13 +43,14 @@ mcp_bank/
     _dev/          serve.mjs check-console.mjs check-live.mjs shoot.mjs vitest.config.mjs
   test/
     contracts/     barrel, catalog, events fixture, fakes, scopes, xray-api contract tests
-    e2e/           oauth-walk.mjs (8899) session-walk.mjs (8897) live-dashboard.mjs (8095, Chrome)
+    e2e/           oauth-walk.mjs (8899) session-walk.mjs (8897) public-walk.mjs (8896) live-dashboard.mjs (8095, Chrome)
     fixtures/      events.jsonl build-events.ts   the recorded session the dashboard replays
     import-boundaries.test.ts
   scripts/         local-login.mjs (npm run login); smoke-worker-sqlite.mjs and its helpers
                    (worker-sqlite-task.mjs bomb-child.mjs probe-*.mjs check-worker-sqlite.ts)
-  infra/           Dockerfile cloudbuild.yaml bootstrap.sh ci-bootstrap.sh deploy.sh smoke.sh domain.sh observe.sh pause.sh
+  infra/           Dockerfile cloudbuild.yaml bootstrap.sh ci-bootstrap.sh deploy.sh smoke.sh domain.sh observe.sh pause.sh export.sh
     local/         docker-compose.yml cloudflared.md
+  exports/         git-ignored: the JSONL files infra/export.sh downloads (D-27)
 ```
 
 Each `src/<block>/` has `index.ts` (exports exactly one factory `create<Block>(deps)` and its types), the implementation, and `__tests__/`. The block's public interface is what `index.ts` exports.
@@ -94,7 +95,7 @@ Task ticket: `docs/tasks/TEMPLATE.md`. Set `Status:` when you start and when you
 
 | Level | Command | Rule |
 |---|---|---|
-| Unit and contract | `npm run check`; `npx vitest run src/<block>`; `npx vitest run public` | Every block runs alone against fakes and fixtures |
+| Unit and contract | `npm run check`; `npx vitest run src/<block>`; `npx vitest run public/__tests__` | Every block runs alone against fakes and fixtures |
 | Protocol and OAuth | `npm run e2e` | Scripted client against a real server it spawns |
 | Dashboard against a real server | `npm run e2e:dashboard` | Headless Chrome paired to a real session; needs Chrome, so not in `check` |
 | Guard evidence | `npm run smoke:worker-sqlite` | Proves the SQL timeout mechanism |

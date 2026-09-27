@@ -25,6 +25,12 @@ export interface XrayConfig {
   readonly xrayMaxStreamsPerLogin: number;
   /** Concurrent SSE streams the whole process may hold open. */
   readonly xrayMaxStreams: number;
+  /**
+   * `XRAY_MAX_PUBLIC_STREAMS` (v0.7, D-26): concurrent streams of the public lane, all readers
+   * together. Its own budget, so strangers watching the public lane cannot use up the streams a
+   * paired viewer needs; still inside `xrayMaxStreams`.
+   */
+  readonly xrayMaxPublicStreams: number;
 }
 
 /** Resolves a persona for the dashboard. Injected by `app` from `bankCore.personas`. */

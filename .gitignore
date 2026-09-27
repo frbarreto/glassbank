@@ -11,3 +11,6 @@ coverage/
 
 # Local OAuth token written by scripts/local-login.mjs (fake bank, local only)
 .glass-bank-token.json
+
+# X-ray event log downloads written by infra/export.sh (D-27)
+exports/

@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { KNOWN_TYPES, TYPE_LABELS } from '../catalogue.js';
-import { routes } from '../api.js';
+import { PUBLIC_LANE, PUBLIC_LOGIN_ID, routes } from '../api.js';
 import { DEFAULT_BUDGET_MS, DEFAULT_CONTENT_CAP } from '../store.js';
 import { PAIRING_CODE_ALPHABET, PAIRING_CODE_PATTERN } from '../pairing.js';
 import { MAX_ROWS } from '../panel-timeline.js';
@@ -45,6 +45,15 @@ describe('the event catalogue', () => {
   });
 });
 
+describe('the public lane copy (contracts v0.7, D-26)', () => {
+  const publicSource = readFileSync(new URL('../../src/contracts/public.ts', import.meta.url), 'utf8');
+
+  it('names the same pseudo login and the same lane query as the contract', () => {
+    expect(publicSource).toContain(`PUBLIC_LOGIN_ID = '${PUBLIC_LOGIN_ID}'`);
+    expect(apiSource).toContain(`PUBLIC_LANE_QUERY = { lane: '${PUBLIC_LANE}' }`);
+  });
+});
+
 describe('the numbers the panels quote', () => {
   it('matches CLAUDE_TOOL_BUDGET_MS and CLAUDE_CONTENT_CHAR_CAP', () => {
     const budget = eventsSource.match(/CLAUDE_TOOL_BUDGET_MS = ([\d_]+)/)[1].replace(/_/g, '');
@@ -74,6 +83,8 @@ describe('the routes the client calls', () => {
     expect(mine.events).toBe(contractRoutes.events);
     expect(mine.catalog).toBe(contractRoutes.catalog);
     expect(mine.stream).toBe(contractRoutes.stream);
+    // v0.8 (D-27): the JSONL download.
+    expect(mine.export).toBe(contractRoutes.export);
     expect(mine.session('xs_1')).toBe(contractRoutes.session.replace(':xs', 'xs_1'));
     expect(mine.sessionEvents('xs_1')).toBe(contractRoutes.sessionEvents.replace(':xs', 'xs_1'));
     expect(mine.sessionBank('xs_1')).toBe(contractRoutes.sessionBank.replace(':xs', 'xs_1'));

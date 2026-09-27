@@ -17,9 +17,10 @@
     "lint": "eslint .",
     "test": "vitest run",
     "check": "npm run typecheck && npm run lint && npm run test",
-    "e2e": "npm run e2e:oauth && npm run e2e:session",
+    "e2e": "npm run e2e:oauth && npm run e2e:session && npm run e2e:public",
     "e2e:oauth": "node test/e2e/oauth-walk.mjs",
     "e2e:session": "node test/e2e/session-walk.mjs",
+    "e2e:public": "node test/e2e/public-walk.mjs",
     "e2e:dashboard": "node test/e2e/live-dashboard.mjs",
     "smoke:worker-sqlite": "node scripts/smoke-worker-sqlite.mjs"
   },

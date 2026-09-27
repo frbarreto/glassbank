@@ -1,9 +1,9 @@
 # contracts
 
-Status: v0.5, frozen and append-only - add event types, optional fields, enum members, tools, scopes and routes; never rename or remove a name in v1.
+Status: v0.8, frozen and append-only - add event types, optional fields, enum members, tools, scopes and routes; never rename or remove a name in v1.
 
 ## Purpose
-The single source of truth every block codes against: the event envelope and catalogue, the 17-tool catalog, scopes and the listing rule, the bank and scratch-database interfaces, auth shapes and constants, the X-ray HTTP API types.
+The single source of truth every block codes against: the event envelope and catalogue, the 17-tool catalog and the 6-tool public catalog, scopes and the listing rule, the bank and scratch-database interfaces, auth shapes and constants, the X-ray HTTP API types.
 Pure types, zod schemas and constants; no I/O.
 
 ## Files (`src/contracts`)
@@ -14,13 +14,21 @@ Pure types, zod schemas and constants; no I/O.
 | `tools.ts` | `ToolCatalogEntry` (published JSON schema with `rationale` required, lenient zod schema with it optional, annotations, `x-*` metadata, `redactionDenyList`, scopes, flag), the 17 entries, `TOOL_CATALOG` / `TOOL_NAMES` / `SCOPE_TO_TOOLS` / `WRITE_TOOL_NAMES` / `getTool`, `publishedToolDescriptor` (the `tools/list` entry, shared by the response and the `catalog.tools_listed` record), Ramp's verbatim strings (`RATIONALE_DESCRIPTION`, `AMOUNT_DESCRIPTION`, `LOAD_TOOL_SUFFIX`, the ETL messages), `LENIENT_RATIONALE` with `isRationaleMissing` / `isRationaleTruncated` / `rationaleMissingReason`, `GLOBAL_REDACTION_PATTERNS`, `TOOL_LIMIT_DEFAULTS`, `toolError` / `toolText` / `toolErrorText`, `ToolContext`, `ToolLimits`, `ToolResult`, `ToolHandler`, `ToolRegistry`. |
 | `bank.ts` | The entities (`Persona`, `Login`, `Grant`, `Account`, `Card`, `Transaction`, `Transfer`, `Payee`, `Bill`, `Category`, `CurrencyInfo`, `AuditEntry`, `StatementLine`; money as `*_cents`), the query shapes, `Page<T>` (`{data, page: {next}}`), `BankScope`, `BankDataset` / `BankOverlay` / `PersonaDirectory`, `BankCore`, the card and transfer mutation inputs and results, `ScratchDb` with `ScratchDbError` / `isScratchDbError` (mechanism-agnostic: `query` may reject with `reason: "timeout"`). |
 | `auth.ts` | `AuthContext`, `OAuthClient`, `OAUTH_ROUTES`, `COOKIE_NAMES` (`login_id`, `xray_viewer`, `gb_csrf`), `OAUTH_METADATA_CONSTANTS`, `TOKEN_LIFETIMES_SECONDS`, `ACCESS_TOKEN_PREFIX` (`mockbank_user_tok_`), `NO_ACCESS_TOKEN_BODY`, the callback allowlist and `isAllowedRedirectUri`, the `PUBLIC_HOSTS` rules (`isPublicHost`, `canonicalBaseUrl`, `canonicalMcpUrl`, `issuerUrl`, `resourceMetadataUrl`, `acceptableAudiences`), the two `WWW-Authenticate` builders, the six `JWT_TYPES` and their claim schemas, `JwtService`, `VerifyAccessToken`, `Pairing` and the code rules (`PAIRING_CODE_ALPHABET`, `PAIRING_CODE_PATTERN`, 50 bits, 24 h). |
-| `xray-api.ts` | `XRAY_ROUTES`, the SSE constants (`SSE_EVENT_NAME`, `SSE_RETRY_MS`, `SSE_HEARTBEAT_MS`, `INITIAL_REPLAY`, `MAX_EVENTS_PAGE_LIMIT`, `RING_BUFFER_SIZE`, `RESULT_PREVIEW_BYTES`, `OBSERVER_RATIONALE_PREVIEW_CHARS`, `SSE_HEADERS`), `renderStreamFrame`, one type per route (`ViewerMeResponse`, `XraySessionsResponse`, `XraySessionDetailResponse`, `XraySessionEventsResponse`, `XrayCatalogSnapshot`, `PairRequest`, `AdminRequest`, `PairResponse`, `XrayErrorResponse`, `XrayViewerScope`, `HealthzResponse`). |
-| `index.ts` | The barrel: `export *` of the six files; the only `src/` path other blocks may import. |
+| `xray-api.ts` | `XRAY_ROUTES`, the SSE constants (`SSE_EVENT_NAME`, `SSE_RETRY_MS`, `SSE_HEARTBEAT_MS`, `INITIAL_REPLAY`, `MAX_EVENTS_PAGE_LIMIT`, `RING_BUFFER_SIZE`, `RESULT_PREVIEW_BYTES`, `OBSERVER_RATIONALE_PREVIEW_CHARS`, `SSE_HEADERS`), `XRAY_EXPORT_CONTENT_TYPE`, `renderStreamFrame`, one type per route (`ViewerMeResponse`, `XraySessionsResponse`, `XraySessionDetailResponse`, `XraySessionEventsResponse`, `XrayCatalogSnapshot`, `PairRequest`, `AdminRequest`, `PairResponse`, `XrayErrorResponse`, `XrayViewerScope`, `XrayExportQuery`, `HealthzResponse`). |
+| `public.ts` | v0.7, the public lane (D-26): `PUBLIC_MCP_PATH`, `PUBLIC_LOGIN_ID`, `PUBLIC_GRANT_PREFIX` / `isPublicGrantId`, `PUBLIC_LANE_NOTICE`; the published data types (`BankProfile`, `ProductFamilySummary`, `ProductDetail`, `PriceLine`, `BranchSummary`, `BranchDetail`, their queries) and `PublicBankInfo`; the six entries, `PUBLIC_TOOL_CATALOG`, `PUBLIC_TOOL_NAMES`, `getPublicTool`, `PublicToolContext`, `PublicToolRegistry`. |
+| `index.ts` | The barrel: `export *` of the seven files; the only `src/` path other blocks may import. |
 
 ## Public interface
-Everything above, through `src/contracts/index.ts`. Test support outside the block: `src/testing/fakes.ts` (`createFakeBankCore`, `createFakeScratchDb`, `createFakeXrayEmitter`, `createFakeAuthContext`, `createFakePairing`, `createFakeToolContext`, the `FAKE_*` data, `paginate`, `flattenRow`, `advertisedColumns`, `bankScopeOf`) and `test/fixtures/events.jsonl`, the truthful v0.5 recording (T7b): 200 events generated by `test/fixtures/build-events.ts`, limits under Known gaps.
+Everything above, through `src/contracts/index.ts`. Test support outside the block: `src/testing/fakes.ts` (`createFakeBankCore`, `createFakeScratchDb`, `createFakeXrayEmitter`, `createFakeAuthContext`, `createFakePairing`, `createFakeToolContext`, the `FAKE_*` data, `paginate`, `flattenRow`, `advertisedColumns`, `bankScopeOf`, and for the public lane `createFakePublicBankInfo` / `createFakePublicToolContext` with `FAKE_PUBLIC_PRODUCT`, `FAKE_PUBLIC_PRICES`, `FAKE_PUBLIC_BRANCH`) and `test/fixtures/events.jsonl`, the truthful v0.5 recording (T7b): 200 events generated by `test/fixtures/build-events.ts`, limits under Known gaps.
 
-## v0.5 changes (current; additive; `docs/contracts/CHANGES.md`)
+## v0.8 changes (current; additive; `docs/contracts/CHANGES.md`)
+1. `XRAY_ROUTES.export` (`GET /xray/api/export`), `XRAY_EXPORT_CONTENT_TYPE` and `XrayExportQuery` (D-27): the event log as JSONL.
+
+## v0.7 changes (additive; `docs/contracts/CHANGES.md`)
+1. `public.ts` as above; `buildPublishedInputSchema` / `buildLenientInputSchema` exported from `tools.ts`.
+2. Six `public.*` members of `BANK_OPERATIONS`, the `public` member of `ViewerKindSchema`, `PUBLIC_LANE_QUERY` and `XrayStreamQuery.lane`.
+
+## v0.5 changes (additive; `docs/contracts/CHANGES.md`)
 1. `CatalogToolDescriptorSchema` and the optional `descriptor` on `CatalogToolSchema`: the `tools/list` entry as the client received it, minus `name` and `title`; filled by `catalogRowsOf` in `src/mcp/xray.ts`.
 2. `publishedToolDescriptor(entry)` in `tools.ts`: the one source for the `tools/list` answer (`src/mcp/transport.ts`) and the recorded `descriptor`.
 
@@ -51,7 +59,7 @@ None; defines all 46.
 
 ## How to test
 ```
-npx vitest run test/contracts src/contracts test/import-boundaries.test.ts   # 362 tests, 9 files
+npx vitest run test/contracts src/contracts test/import-boundaries.test.ts   # 455 tests, 9 files
 npx vitest run src/testing                                                    # 30 tests: the fakes
 npx tsx test/fixtures/build-events.ts                                         # regenerates events.jsonl, byte-identical
 ```

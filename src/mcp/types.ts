@@ -72,6 +72,16 @@ export interface ToolContextBase {
 }
 
 /**
+ * What the transport hands a `ToolPort` for one call. `auth` is `null` on the public lane, whose
+ * caller is anonymous (D-26); `grantId` and `xs` are then the visitor's pseudo grant and session.
+ */
+export interface ToolCallBase extends Omit<ToolContextBase, 'auth'> {
+  readonly auth: AuthContext | null;
+  readonly grantId: string;
+  readonly xs: string | null;
+}
+
+/**
  * How `src/app.ts` turns the half `mcp` knows into the whole thing `src/tools` needs:
  *
  * ```ts

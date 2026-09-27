@@ -14,6 +14,8 @@ import type { Request, Response } from 'express';
 
 import {
   COOKIE_NAMES,
+  PUBLIC_LANE_QUERY,
+  PUBLIC_LOGIN_ID,
   TOKEN_LIFETIMES_SECONDS,
   type JwtService,
   type ViewerKind,
@@ -59,6 +61,9 @@ export interface IssueViewerCookieInput {
  * `HttpOnly`).
  */
 export async function issueViewerCookie(input: IssueViewerCookieInput): Promise<string> {
+  // The public lane is read with `?lane=public` and never through a cookie (D-26): a cookie would
+  // replace the pairing cookie of the same browser.
+  if (input.viewerKind === 'public') throw new Error('the public lane is read without a cookie');
   const ttlSeconds = input.ttlSeconds ?? TOKEN_LIFETIMES_SECONDS.viewer;
   const { token, expiresAt } = await input.jwt.sign(
     'viewer',
@@ -116,9 +121,28 @@ function firstString(value: unknown): string | null {
   return null;
 }
 
+/** True when a request asks for the public lane (`?lane=public`, contracts v0.7). */
+export function wantsPublicLane(query: Record<string, unknown>): boolean {
+  return firstString(query.lane) === PUBLIC_LANE_QUERY.lane;
+}
+
+/**
+ * The reader of the public lane (D-26): no cookie, bound to `PUBLIC_LOGIN_ID`, read-only. What it
+ * sees was announced as public to every agent that sent it, in the server instructions and in
+ * every public tool description (`PUBLIC_LANE_NOTICE`).
+ */
+export function publicLaneViewer(now: Date): ViewerIdentity {
+  return {
+    viewer_kind: 'public',
+    login_id: PUBLIC_LOGIN_ID,
+    expires_at: new Date(now.getTime() + TOKEN_LIFETIMES_SECONDS.viewer * 1000).toISOString(),
+  };
+}
+
 /**
  * `?xs=<id>` | `?login=me` | `?all=1` (docs/XRAY_EVENT_MODEL.md section 5). Exactly one applies;
- * with none of them a pairing viewer gets its login and an admin gets everything.
+ * with none of them a pairing viewer gets its login, a public reader the public lane (its login is
+ * `PUBLIC_LOGIN_ID`) and an admin gets everything.
  */
 export function resolveScope(
   viewer: ViewerIdentity,
@@ -190,6 +214,6 @@ export function resolveScope(
   }
   return {
     ok: true,
-    scope: { viewer_kind: 'pairing', filter: 'login', login_id: viewer.login_id, xs: null },
+    scope: { viewer_kind: viewer.viewer_kind, filter: 'login', login_id: viewer.login_id, xs: null },
   };
 }

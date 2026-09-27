@@ -17,6 +17,21 @@ export function detectBase(pathname) {
   return '';
 }
 
+/**
+ * The pseudo login of the public lane (`PUBLIC_LOGIN_ID` in `src/contracts/public.ts`, D-26): every
+ * anonymous visitor of `/public/mcp` is filed under it. A copy, checked by `contract-copy.test.mjs`.
+ */
+export const PUBLIC_LOGIN_ID = 'lgn_public';
+
+/** `?lane=public` (`PUBLIC_LANE_QUERY`): the public lane's reads need no cookie and ignore one. */
+export const PUBLIC_LANE = 'public';
+
+/** Appends `lane=public` to a read URL when the page is watching the public lane. */
+export function withLane(url, lane) {
+  if (lane !== PUBLIC_LANE) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}lane=${PUBLIC_LANE}`;
+}
+
 /** Every route the dashboard uses, relative to the detected base (`XRAY_ROUTES` in the contract). */
 export function routes(base) {
   return {
@@ -33,6 +48,8 @@ export function routes(base) {
     events: `${base}/api/events`,
     catalog: `${base}/api/catalog`,
     stream: `${base}/api/stream`,
+    /** v0.8 (D-27): the log this viewer may read, as a JSONL download. */
+    export: `${base}/api/export`,
   };
 }
 
@@ -75,24 +92,33 @@ async function request(url, options = {}) {
   }
 }
 
-/** Builds the client. `base` defaults to the detected mount point. */
-export function createApi(base = detectBase(typeof location === 'undefined' ? '/' : location.pathname)) {
+/**
+ * Builds the client. `base` defaults to the detected mount point; `options.lane === 'public'`
+ * turns every read into a public-lane read (v0.7, D-26), which needs no cookie.
+ */
+export function createApi(
+  base = detectBase(typeof location === 'undefined' ? '/' : location.pathname),
+  options = {},
+) {
   const route = routes(base);
+  const lane = options.lane === PUBLIC_LANE ? PUBLIC_LANE : null;
+  const read = (url) => withLane(url, lane);
   return {
     base,
     route,
-    me: () => request(route.me),
-    sessions: () => request(route.sessions),
-    session: (xs) => request(route.session(xs)),
+    lane,
+    me: () => request(read(route.me)),
+    sessions: () => request(read(route.sessions)),
+    session: (xs) => request(read(route.session(xs))),
     sessionEvents: (xs, query = {}) => {
       const params = new URLSearchParams();
       if (query.after !== undefined) params.set('after', String(query.after));
       if (query.limit !== undefined) params.set('limit', String(query.limit));
       const suffix = params.toString() ? `?${params}` : '';
-      return request(`${route.sessionEvents(xs)}${suffix}`);
+      return request(read(`${route.sessionEvents(xs)}${suffix}`));
     },
     /** `XraySessionBankResponse`, or `{error, message}` (401, 403, 404 `not_found` / `no_persona`, 503 `unavailable`). */
-    sessionBank: (xs) => request(route.sessionBank(xs)),
+    sessionBank: (xs) => request(read(route.sessionBank(xs))),
     /**
      * v0.4: erases every event of the viewer's login. `XrayDeleteResponse {deleted, sessions,
      * scope}` on success; `{error, message}` with 401 (no cookie) or 403 (observer mode, which is
@@ -102,16 +128,21 @@ export function createApi(base = detectBase(typeof location === 'undefined' ? '/
     deleteEvents: () => request(route.events, { method: 'DELETE' }),
     /** v0.4: erases one session. 403 for observer mode, and for an unknown or another login's `xs`. */
     deleteSession: (xs) => request(route.session(xs), { method: 'DELETE' }),
-    catalog: (xs) => request(`${route.catalog}?xs=${encodeURIComponent(xs)}`),
+    catalog: (xs) => request(read(`${route.catalog}?xs=${encodeURIComponent(xs)}`)),
     pair: (code) => request(route.pair, { method: 'POST', body: { code } }),
     admin: (token) => request(route.admin, { method: 'POST', body: { token } }),
     /** The SSE URL for one of the three viewer filters of section 5. */
     streamUrl: (filter) => {
-      if (filter && filter.xs) return `${route.stream}?xs=${encodeURIComponent(filter.xs)}`;
+      if (filter && filter.xs) return read(`${route.stream}?xs=${encodeURIComponent(filter.xs)}`);
       if (filter && filter.all) return `${route.stream}?all=1`;
-      return `${route.stream}?login=me`;
+      return read(`${route.stream}?login=me`);
     },
     fixturesUrl: () => route.fixtures,
+    /**
+     * v0.8 (D-27): the JSONL download of every event this viewer may read. A plain link, so the
+     * browser sends the cookie itself (or, on the public lane, needs none) and saves the file.
+     */
+    exportUrl: () => read(route.export),
   };
 }
 
@@ -125,5 +156,7 @@ export function readQuery(search) {
     rate: params.get('rate') ? Number(params.get('rate')) : null,
     xs: params.get('xs'),
     all: params.get('all') === '1',
+    /** `?lane=public`: watch the public lane, no pairing code needed (D-26). */
+    lane: params.get('lane') === PUBLIC_LANE ? PUBLIC_LANE : null,
   };
 }

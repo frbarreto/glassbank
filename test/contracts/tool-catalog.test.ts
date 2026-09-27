@@ -14,12 +14,16 @@ import {
   CatalogToolSchema,
   LOAD_STATEMENT_LINES,
   LOCK_OR_UNLOCK_CARD,
+  PUBLIC_LANE_NOTICE,
+  PUBLIC_TOOL_CATALOG,
+  PUBLIC_TOOL_NAMES,
   RATIONALE_DESCRIPTION,
   RATIONALE_MAX_LENGTH,
   SCOPES,
   SCOPE_TO_TOOLS,
   TOOL_CATALOG,
   TOOL_NAMES,
+  getPublicTool,
   getTool,
   isRationaleMissing,
   isRationaleTruncated,
@@ -75,7 +79,8 @@ describe('the tool catalog (docs/TOOL_CATALOG.md)', () => {
     expect(isToolName('create_transfers')).toBe(false);
   });
 
-  describe.each(TOOL_CATALOG.map((entry) => [entry.name, entry] as const))(
+  // v0.7: the six public tools (D-26) obey the same catalog rules as the seventeen.
+  describe.each([...TOOL_CATALOG, ...PUBLIC_TOOL_CATALOG].map((entry) => [entry.name, entry] as const))(
     '%s',
     (name, entry: ToolCatalogEntry) => {
       it('has a snake_case name of 64 characters or fewer (Decision D-12)', () => {
@@ -202,7 +207,7 @@ describe('the tool catalog (docs/TOOL_CATALOG.md)', () => {
   );
 
   it('states the USD-cents rule on every amount parameter (Decision D-1)', () => {
-    const amountProperties = TOOL_CATALOG.flatMap((entry) =>
+    const amountProperties = [...TOOL_CATALOG, ...PUBLIC_TOOL_CATALOG].flatMap((entry) =>
       namedProperties(entry.publishedInputSchema).filter(([path]) =>
         /amount$/.test(path.replace(/^oneOf\[\d+]\./, '')),
       ),
@@ -252,6 +257,42 @@ describe('the tool catalog (docs/TOOL_CATALOG.md)', () => {
       'load_statement_lines',
     ]);
     expect(SCOPE_TO_TOOLS.profile).toEqual(['get_current_user', 'get_tool_availability']);
+  });
+});
+
+describe('the public catalog (contracts v0.7, D-26)', () => {
+  it('has the six public tools in level order, none of them named like a private tool', () => {
+    expect(PUBLIC_TOOL_NAMES).toEqual([
+      'get_bank_profile',
+      'list_products',
+      'get_product',
+      'search_prices',
+      'find_branches',
+      'get_branch',
+    ]);
+    for (const name of PUBLIC_TOOL_NAMES) {
+      expect(TOOL_NAMES).not.toContain(name);
+      expect(getPublicTool(name)?.name).toBe(name);
+      expect(getTool(name)).toBeUndefined();
+    }
+    expect(getPublicTool('load_accounts')).toBeUndefined();
+  });
+
+  it.each(PUBLIC_TOOL_CATALOG.map((entry) => [entry.name, entry] as const))(
+    '%s is read-only, needs no scope or flag, and tells the agent the lane is public',
+    (_name, entry: ToolCatalogEntry) => {
+      expect(entry.annotations.readOnlyHint).toBe(true);
+      expect(entry.metadata['x-read-only']).toBe(true);
+      expect(entry.requiredScopes).toEqual([]);
+      expect(entry.featureFlags).toEqual([]);
+      expect(entry.description.endsWith(PUBLIC_LANE_NOTICE)).toBe(true);
+    },
+  );
+
+  it('produces descriptors CatalogToolDescriptorSchema accepts', () => {
+    for (const entry of PUBLIC_TOOL_CATALOG) {
+      expect(CatalogToolDescriptorSchema.safeParse(publishedToolDescriptor(entry)).success).toBe(true);
+    }
   });
 });
 

@@ -10,6 +10,7 @@
 import { cx, h } from './h.js';
 import { button, callout, emptyState, statusBadge, tag } from './ui.js';
 import { count, expiry, plural, relativeTime, shortDateTime } from './format.js';
+import { PUBLIC_LOGIN_ID } from './api.js';
 
 /**
  * Erasing is real and irreversible, so nothing here fires on one click and nothing here appears
@@ -18,7 +19,8 @@ import { count, expiry, plural, relativeTime, shortDateTime } from './format.js'
  */
 export function canErase(view) {
   if (view.mode === 'fixture') return false;
-  return (view.viewer?.viewer_kind ?? 'pairing') !== 'admin';
+  // Observer mode and the public lane are read-only (invariant 11, D-26).
+  return (view.viewer?.viewer_kind ?? 'pairing') === 'pairing';
 }
 
 /** The two-step confirm: which control is armed, whether it is in flight, and what came back. */
@@ -131,11 +133,14 @@ function sessionButton(session, view, now) {
 
 function grantBlock(grantGroup, view, now) {
   const grant = grantGroup.grant;
-  const lineage = grant?.parent_grant_id
-    ? `re-consent, continues ${grant.parent_grant_id}`
-    : grant?.added_scopes?.length
-      ? `extended on step-up (+${grant.added_scopes.join(', ')})`
-      : 'original consent';
+  // A public-lane visitor never consented to anything: its id is a hash, not a grant (D-26).
+  const lineage = String(grantGroup.grant_id ?? '').startsWith('grt_pub_')
+    ? 'anonymous visitor: IP prefix and User-Agent, hashed'
+    : grant?.parent_grant_id
+      ? `re-consent, continues ${grant.parent_grant_id}`
+      : grant?.added_scopes?.length
+        ? `extended on step-up (+${grant.added_scopes.join(', ')})`
+        : 'original consent';
   return h(
     'div',
     { class: 'grant-block' },
@@ -208,7 +213,31 @@ function clearControl(model) {
   );
 }
 
-/** The whole panel. `model` is `{ store, view, now }`. */
+/**
+ * v0.8 (D-27): the log this viewer may read, as a JSONL file - a pairing viewer its own login, the
+ * public lane its anonymous visitors, observer mode everything. A link rather than a button: the
+ * browser sends the cookie and saves the file under the name the server gives it.
+ */
+function exportControl(model) {
+  const { view, api } = model;
+  if (view.mode === 'fixture' || !api || typeof api.exportUrl !== 'function') return null;
+  return h(
+    'div',
+    { class: 'sessions-export' },
+    h(
+      'a',
+      {
+        class: 'btn btn-quiet',
+        href: api.exportUrl(),
+        download: '',
+        title: 'Every event this page can show, one JSON event per line. It survives a server restart.',
+      },
+      'Download log (JSONL)',
+    ),
+  );
+}
+
+/** The whole panel. `model` is `{ store, view, now, api }`. */
 export function renderSessions(model) {
   const { store, view, now } = model;
   const groups = store.getLoginGroups();
@@ -225,6 +254,7 @@ export function renderSessions(model) {
           `${boots.length - 1} restart${boots.length === 2 ? '' : 's'} observed`,
         )
       : null,
+    exportControl(model),
     clearControl(model),
   );
   const messages = h(
@@ -242,10 +272,15 @@ export function renderSessions(model) {
       { class: 'section' },
       head,
       messages,
-      emptyState(
-        'No session yet',
-        'A session appears the moment your Claude client makes its first authenticated request to the bank. Ask it something in chat.',
-      ),
+      view.viewer?.viewer_kind === 'public'
+        ? emptyState(
+            'No anonymous visitor yet',
+            'A session appears the moment an agent calls /public/mcp, the endpoint that needs no sign-in.',
+          )
+        : emptyState(
+            'No session yet',
+            'A session appears the moment your Claude client makes its first authenticated request to the bank. Ask it something in chat.',
+          ),
     );
   }
 
@@ -261,12 +296,19 @@ export function renderSessions(model) {
         h(
           'div',
           { class: 'login-group' },
-          h(
-            'div',
-            { class: 'login-head' },
-            h('span', { class: 'login-label' }, 'Login'),
-            h('span', { class: 'mono login-id' }, group.login_id ?? 'unknown'),
-          ),
+          group.login_id === PUBLIC_LOGIN_ID
+            ? h(
+                'div',
+                { class: 'login-head' },
+                h('span', { class: 'login-label' }, 'Public lane'),
+                h('span', { class: 'login-id' }, 'anonymous visitors, no sign-in'),
+              )
+            : h(
+                'div',
+                { class: 'login-head' },
+                h('span', { class: 'login-label' }, 'Login'),
+                h('span', { class: 'mono login-id' }, group.login_id ?? 'unknown'),
+              ),
           group.persona_id
             ? h(
                 'div',

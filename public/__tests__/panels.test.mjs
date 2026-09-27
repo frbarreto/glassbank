@@ -32,6 +32,7 @@ import { renderNowStrip } from '../panel-now-strip.js';
 import { renderConnectScreen, renderStreamBanner, renderViewerChip } from '../panel-connect.js';
 import { effectiveSessionXs, renderPersona } from '../panel-persona.js';
 import { parseFilter } from '../filters.js';
+import { createApi } from '../api.js';
 import {
   catRawKey,
   catToolKey,
@@ -1450,6 +1451,35 @@ describe('Sessions: erasing history', () => {
   });
 });
 
+describe('Sessions: downloading the log (v0.8, D-27)', () => {
+  const withApi = (overrides, lane) => ({
+    ...model({ mode: 'live', ...overrides }),
+    api: createApi('/xray', { lane }),
+  });
+  const linkOf = (tree) =>
+    findNodes(tree, (node) => node.tag === 'a' && node.attrs.download !== undefined)[0];
+
+  it('links every live viewer to the JSONL export of what it may read', () => {
+    const paired = linkOf(renderSessions(withApi({})));
+    expect(paired.attrs.href).toBe('/xray/api/export');
+    expect(textOf(paired)).toBe('Download log (JSONL)');
+    const observer = linkOf(
+      renderSessions(withApi({ viewer: { viewer_kind: 'admin', login_id: null, expires_at: null } })),
+    );
+    expect(observer.attrs.href).toBe('/xray/api/export');
+    const publicLane = linkOf(
+      renderSessions(
+        withApi({ viewer: { viewer_kind: 'public', login_id: 'lgn_public', expires_at: null } }, 'public'),
+      ),
+    );
+    expect(publicLane.attrs.href).toBe('/xray/api/export?lane=public');
+  });
+
+  it('has nothing to download in fixture mode', () => {
+    expect(linkOf(renderSessions(withApi({ mode: 'fixture' })))).toBeUndefined();
+  });
+});
+
 describe('the remaining panels', () => {
   it('Sessions groups by login and grant and marks the shared persona', () => {
     const text = textOf(renderSessions(model()));
@@ -1644,6 +1674,31 @@ describe('empty and error states', () => {
         }),
       ),
     ).toContain('observer mode');
+    const lane = renderViewerChip({
+      view: { mode: 'live', viewer: { viewer_kind: 'public', login_id: 'lgn_public' } },
+      now: FIXTURE_NOW,
+    });
+    expect(textOf(lane)).toContain('public lane');
+    expect(findNodes(lane, (node) => node.attrs['data-action'] === 'leave-public-lane')).toHaveLength(1);
+  });
+
+  it('offers the public lane on the front door, no code needed (D-26)', () => {
+    const tree = renderConnectScreen({
+      view: { pairing: { code: '', error: null, busy: false }, adminOpen: false, connectError: null },
+    });
+    expect(findNodes(tree, (node) => node.attrs['data-action'] === 'enter-public-lane')).toHaveLength(1);
+    expect(textOf(tree)).toContain('/public/mcp');
+  });
+
+  it('never offers an erase to a reader of the public lane (D-26)', () => {
+    const tree = renderSessions(
+      model({ mode: 'live', viewer: { viewer_kind: 'public', login_id: 'lgn_public' } }),
+    );
+    const actions = findNodes(tree, (node) => node.attrs['data-action']).map(
+      (node) => node.attrs['data-action'],
+    );
+    expect(actions).not.toContain('ask-erase');
+    expect(actions).not.toContain('hide-events');
   });
 });
 

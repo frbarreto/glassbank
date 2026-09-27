@@ -50,7 +50,22 @@ export const XRAY_ROUTES = {
    * `/healthz` stays for local tooling.
    */
   health: '/health',
+  /**
+   * v0.8 (D-27): `GET` downloads the event log as JSONL, one stored envelope per line, oldest
+   * first - the copy that survives a restart, a push or `make pause`. Same scopes as `stream`,
+   * never observer-redacted; `Authorization: Bearer <XRAY_ADMIN_TOKEN>` stands in for the admin
+   * cookie so one `curl` is enough (`XrayExportQuery`).
+   */
+  export: '/xray/api/export',
 } as const;
+
+/**
+ * v0.7 (D-26): `?lane=public` on any read route - `me`, `sessions`, `session`, `sessionEvents`,
+ * `catalog`, `stream` - answers for the public lane without a cookie: `viewer_kind: 'public'`,
+ * bound to `PUBLIC_LOGIN_ID`, read-only. The cookie, when present, is ignored for that request, so
+ * one browser can keep a paired tab and a public tab open side by side.
+ */
+export const PUBLIC_LANE_QUERY = { lane: 'public' } as const;
 
 /** SSE transport (docs/XRAY_EVENT_MODEL.md section 5). */
 export const SSE_EVENT_NAME = 'xray';
@@ -66,6 +81,8 @@ export const RING_BUFFER_SIZE = 10_000;
 export const RESULT_PREVIEW_BYTES = 2048;
 /** Observer mode masks `rationale` to this many characters and hides arguments entirely. */
 export const OBSERVER_RATIONALE_PREVIEW_CHARS = 80;
+/** v0.8: the body of `GET /xray/api/export`, the same line format as `test/fixtures/events.jsonl`. */
+export const XRAY_EXPORT_CONTENT_TYPE = 'application/x-ndjson; charset=utf-8';
 
 /** The headers every SSE response carries. */
 export const SSE_HEADERS = {
@@ -240,6 +257,20 @@ export interface XrayStreamQuery {
   readonly xs?: string;
   readonly login?: 'me';
   readonly all?: '1';
+  /** v0.7: the public lane, no cookie needed (`PUBLIC_LANE_QUERY`). */
+  readonly lane?: 'public';
+}
+
+/**
+ * `GET /xray/api/export` (v0.8, D-27): the scope of `XrayStreamQuery`, plus `after` to fetch only
+ * what is newer than the last line of a previous export. The answer is JSONL
+ * (`XRAY_EXPORT_CONTENT_TYPE`): every event the scope may read with `id > after`, up to the newest
+ * id at the moment of the request, verbatim as stored. No observer redaction, not even for the
+ * admin reader, because the export is the operator's copy of the log. An empty scope answers 200
+ * with an empty body.
+ */
+export interface XrayExportQuery extends XrayStreamQuery {
+  readonly after?: number;
 }
 
 /** What the viewer's cookie resolves to before any event is fanned out. */

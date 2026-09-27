@@ -183,6 +183,10 @@ function lenient<T extends z.ZodRawShape>(shape: T) {
   return z.object({ ...shape, rationale: LENIENT_RATIONALE });
 }
 
+/** v0.7: the two schema builders, so the public catalog in `public.ts` follows ADR-8 the same way. */
+export const buildPublishedInputSchema = published;
+export const buildLenientInputSchema = lenient;
+
 /** True when the incoming value would be shortened by the lenient schema. */
 export function isRationaleTruncated(value: unknown): boolean {
   return typeof value === 'string' && value.length > RATIONALE_MAX_LENGTH;

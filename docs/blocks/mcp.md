@@ -1,32 +1,35 @@
 # mcp
 
-Status: done, contracts v0.5, wired in `src/composition.ts` (`createMcp({...})` with `xray.emitter`, the 17-tool registry and a `toolContext` factory; mounted at `/mcp` by `src/app.ts`).
+Status: done, contracts v0.7, wired in `src/composition.ts` (`createMcp({...})` with `xray.emitter`, the 17-tool registry, a `toolContext` factory and, unless `PUBLIC_MCP=false`, the public lane; mounted at `/mcp`, and `handle.publicLane` at `/public/mcp`, by `src/app.ts`).
 
 ## Purpose
-The transport adapter and the only block that imports `@modelcontextprotocol/sdk` (ADR-2): stateless Streamable HTTP at `/mcp`, with the bearer gate, Origin policy, scope check and per-grant rate limit running before the SDK sees the body.
+The transport adapter and the only block that imports `@modelcontextprotocol/sdk` (ADR-2): stateless Streamable HTTP at `/mcp`, with the bearer gate, Origin policy, scope check and per-grant rate limit running before the SDK sees the body; and at `/public/mcp` the same transport with no gate at all, for the six public tools (D-26, ADR-19).
 It also mints the X-ray session `xs` per grant, correlates every event of a request and instruments every JSON-RPC frame (invariant 13).
 
 ## Files
-- `index.ts` - `createMcp`: the Express router (`OPTIONS`, `GET`/`DELETE` 405, `POST`), the gate order below, the `xs` touch, the grant limiter, `session.*` and `http.request` emits, `shutdown`/`sweep`/`stats`.
+- `index.ts` - `createMcp`: the Express router (`OPTIONS`, `GET`/`DELETE` 405, `POST`), the gate order below, the `xs` touch, the grant limiter, `session.*` and `http.request` emits, `shutdown`/`sweep`/`stats`; builds the public lane when `deps.publicLane` is given.
+- `http.ts` - what both endpoints share: `createMcpCors`, `registerPreflight`, `createMethodNotAllowed`, `createParseErrorObserver`, `httpRequestFacts` (the `http.request` payload), `createWindowLimiter` (fixed one-minute window per key, bounded), `ipPrefixOf`, `remoteIpOf`.
+- `public-lane.ts` - `createPublicLane`: `/public/mcp` (D-26). No bearer and no challenge; `visitorGrantId` (`grt_pub_` + 12 hex of sha256 over IP prefix and User-Agent) keys the session manager, catalog memory and counters; every event carries `PUBLIC_LOGIN_ID`; per-IP-prefix and lane-wide `tools/call` limits; its own transport with `PUBLIC_SERVER_INSTRUCTIONS` and `PUBLIC_SERVER_INFO`; `PUBLIC_BODY_LIMIT` 256 kb.
 - `gate.ts` - `summariseJsonRpc` (methods, tool names, `initialize` params, `_meta.traceparent`), `bearerTokenOf`, `baseUrlForRequest`, `decideOrigin`, `isAnthropicEgress`, `sendUnauthorized`, `sendInsufficientScope`, `scopeDenial`, `stepUpScopesFor`.
-- `transport.ts` - `createTransport`: a fresh low-level `Server` + `StreamableHTTPServerTransport` per request; `tools/list`, `tools/call`, `prompts/list`, `resources/list`, `resources/templates/list`; response-body capture for `protocol.error`; `negotiateProtocolVersion`, `SERVER_CAPABILITIES`.
+- `transport.ts` - `createTransport`: a fresh low-level `Server` + `StreamableHTTPServerTransport` per request, for a caller described by `grantId`, `grant` and an `auth` that is `null` on the public lane; `tools/list`, `tools/call`, `prompts/list`, `resources/list`, `resources/templates/list`; response-body capture for `protocol.error`; `negotiateProtocolVersion`, `SERVER_CAPABILITIES`.
 - `sessions.ts` - `createSessionManager`: one `xs` per `grant_id`, split on `XS_IDLE_GAP_MINUTES`, carries the last `clientInfo` and the counters `session.ended` reports; `sweep`, `endAll`.
 - `xray.ts` - `withCorrelation`, `emitWithId`, `eraOf`, `catalogRowsOf`, `inputSchemaHash`, `summariseResult`, `RESULT_PREVIEW_TRUNCATION_SUFFIX` (a copy of the emitter's marker; this block may not import `src/xray`, so `__tests__/events.test.ts` reads the original from disk and fails on drift).
 - `in-flight.ts` - open tool calls; `tool.call.cancelled` on client hang-up or shutdown.
 - `catalog-memory.ts` - last `content_hash` per grant, so `catalog.tools_listed` elides an unchanged tool array and points at `snapshot_ref`.
 - `bounded-map.ts` - `BoundedSessionMap`, the block's own capped LRU (blocks may not share code).
 - `bootstrap-tools.ts` - `get_current_user` and `get_tool_availability` answered from `ToolContextBase` alone: the fallback when `createMcp` gets no `registry`. Unreachable once wired: `src/composition.ts` always injects the registry and `src/__tests__/wiring.test.ts` asserts 17 tools.
-- `instructions.ts` - `SERVER_INSTRUCTIONS` (docs/TOOL_CATALOG.md section 5) and `SERVER_INFO`.
-- `types.ts` - `McpConfig`, `McpLogger`, `ToolContextBase`, `ToolContextFactory`, `PersonaLookup`, `ClientLookup`.
+- `instructions.ts` - `SERVER_INSTRUCTIONS` (docs/TOOL_CATALOG.md section 5) and `SERVER_INFO`; `PUBLIC_SERVER_INSTRUCTIONS` and `PUBLIC_SERVER_INFO` (`glass-bank-public`, section 8).
+- `types.ts` - `McpConfig`, `McpLogger`, `ToolContextBase`, `ToolCallBase` (what the transport hands a port: `auth` nullable, `grantId`, `xs`), `ToolContextFactory`, `PersonaLookup`, `ClientLookup`.
 
 ## Public interface (`src/mcp/index.ts`)
-- `createMcp(deps: McpDeps): McpHandler` - the Express handler plus `shutdown('server_stopping')` (synchronous: cancels in-flight calls, ends every session), `sweep()`, `sessions`, `stats()`.
+- `createMcp(deps: McpDeps): McpHandler` - the Express handler plus `shutdown('server_stopping')` (synchronous: cancels in-flight calls, ends every session of both endpoints), `sweep()`, `sessions`, `publicLane` (a `PublicLaneHandler`, or `null`), `stats()` (with `publicSessions`).
+- `createPublicLane`, `visitorGrantId`, `PUBLIC_BODY_LIMIT`, `PUBLIC_SERVER_INFO`, `PUBLIC_SERVER_INSTRUCTIONS`; types `PublicLaneConfig`, `PublicLaneDeps`, `PublicLaneHandle`, `PublicLaneHandler`.
 - `SESSION_SWEEP_INTERVAL_MS` (60 000) - the unref'd idle-sweep timer; `deps.sweepIntervalMs: 0` disables it.
 - Re-exports: `createTransport`, `negotiateProtocolVersion`, `SERVER_CAPABILITIES` (`transport.ts`); `createSessionManager` (`sessions.ts`); `catalogRowsOf`, `eraOf`, `inputSchemaHash`, `withCorrelation` (`xray.ts`); `bootstrapCall`, `bootstrapListFor`, `catalogContentHash`, `BOOTSTRAP_TOOLS`, `NOT_IMPLEMENTED_MESSAGE` (`bootstrap-tools.ts`); `SERVER_INSTRUCTIONS`, `SERVER_INFO` (`instructions.ts`).
 - Types: `McpDeps`, `McpHandle`, `McpHandler`, `ToolPort`, `TransportOutcome`, `TransportRequestContext`, `EndedSession`, `SessionManager`, `SessionState`, `McpConfig`, `McpLogger`, `McpLogRecord`, `SpikeLogger`, `SpikeLogRecord`, `ToolContextBase`, `ToolContextFactory`.
 
 ## Consumes
-- `McpDeps`: `config: McpConfig` (`publicBaseUrl`, `publicHosts`, `originPolicy`, `featureFlags`, `xsIdleGapMinutes`, `grantToolCallsPerMin` = `RATE_LIMIT_GRANT_TOOL_CALLS`), `verifyAccessToken` (`auth.verifyAccessToken`), `lookupPersona` (`bankCore.personas.get`), `lookupClient` (`auth.lookupClient`), `bootId`, `xray` (`xray.emitter`), `registry` (`ToolRegistry` from `src/tools`), `toolContext` (completes `ToolContextBase` with `bank`, `scratch`, `pairing`, `limits`); optional `log`, `now`, `sweepIntervalMs`. `registry` without `toolContext`, or the reverse, throws at construction.
+- `McpDeps`: `config: McpConfig` (`publicBaseUrl`, `publicHosts`, `originPolicy`, `featureFlags`, `xsIdleGapMinutes`, `grantToolCallsPerMin` = `RATE_LIMIT_GRANT_TOOL_CALLS`), `verifyAccessToken` (`auth.verifyAccessToken`), `lookupPersona` (`bankCore.personas.get`), `lookupClient` (`auth.lookupClient`), `bootId`, `xray` (`xray.emitter`), `registry` (`ToolRegistry` from `src/tools`), `toolContext` (completes `ToolContextBase` with `bank`, `scratch`, `pairing`, `limits`); optional `log`, `now`, `sweepIntervalMs`, and `publicLane` (`registry`: a `PublicToolRegistry`, `info`: `bankCore.publicInfo`, `ipToolCallsPerMin` = `RATE_LIMIT_PUBLIC_IP_TOOL_CALLS`, `toolCallsPerMin` = `RATE_LIMIT_PUBLIC_TOOL_CALLS`). `registry` without `toolContext`, or the reverse, throws at construction.
 - `src/contracts`: `AuthContext`, `ToolRegistry`, `ToolCatalogEntry`, `GrantView`, the challenge builders, `canonicalBaseUrl`, `resourceMetadataUrl`, `DEFAULT_CHALLENGE_SCOPES`, `ANTHROPIC_EGRESS_CIDR`, `getTool`, `flagsEnabledFor`, `missingScopesFor`, `stepUpScopes`, `isListed`, `catalogAvailability`, `CLAUDE_TOOL_BUDGET_MS`, `CLAUDE_CONTENT_CHAR_CAP`, `RESULT_PREVIEW_BYTES`, `publishedToolDescriptor`, `XrayEmitter`. npm: `@modelcontextprotocol/sdk` 1.30.0 (imported only in `transport.ts`), `express`.
 
 ## Gate order (`index.ts` `handlePost`)
@@ -38,6 +41,14 @@ It also mints the X-ray session `xs` per grant, correlates every event of a requ
 6. `scopeDenial` on the parsed `params.name`: a listed, flag-enabled tool the grant cannot call -> 403 `insufficient_scope`, `WWW-Authenticate` with every still-needed issuable scope (`stepUpScopesFor`) and `resource_metadata`; `error_description` names only this tool's missing scopes. Unknown or flag-disabled tools pass through to the SDK's `-32601`.
 7. `RATE_LIMIT_GRANT_TOOL_CALLS` per grant per minute (`createGrantLimiter` in `index.ts`, a 5000-key map): over budget -> 429 JSON + `Retry-After: 60`.
 8. `lookupPersona(sub)` null -> 401 `invalid_token`; then the `AuthContext` is built (`parent_grant_id: null`, `client` from the session record, `oauth_client` from `lookupClient`) and the SDK handles the frame.
+
+## The public lane (`public-lane.ts`, D-26)
+1. `GET`/`DELETE` 405 and `OPTIONS` 204 as on `/mcp`; `express.json` with a 256 kb limit.
+2. The Origin policy, exactly as on `/mcp` (invariant 10).
+3. No bearer check: an `Authorization` header is ignored (and recorded as `has_authorization`). The lane never answers 401 or 403 `insufficient_scope`; a signed-in tool name is an unknown tool (`-32601`).
+4. `sessions.touch(visitorGrantId(request))` with `loginId: PUBLIC_LOGIN_ID` and no persona.
+5. `tools/call` only: `RATE_LIMIT_PUBLIC_IP_TOOL_CALLS` per IP prefix, then `RATE_LIMIT_PUBLIC_TOOL_CALLS` for the whole lane, each per minute; over either -> 429 + `Retry-After: 60` and `tool.call.denied {rate_limited}`. `initialize` and `tools/list` are never limited.
+6. The transport answers with `auth: null`, `grant: {scopes: []}`, no feature flags, and the request's own base URL as `publicBaseUrl`, so the pointer to `/mcp` names the host the visitor used.
 
 Every `/mcp` answer carries CORS (`Vary: Origin`, the echoed allowed origin, `Access-Control-Expose-Headers: WWW-Authenticate, x-request-id, mcp-protocol-version`), never `Allow-Credentials`.
 
@@ -65,7 +76,9 @@ Every event carries the request correlation (`xs`, `login_id`, `grant_id`, `pers
 - `auth.stepup.requested` - with the 403: `status`, `error`, `grant_id`, `login_id`, `persona_id`, `tool`, `scope`, `missing_scopes`, `resource_metadata`.
 
 ## Invariants held here
-- Invariant 5: 401 and 403 are written before the SDK, never `200` + `isError`; the 403 lists every still-needed scope plus `resource_metadata`.
+- Invariant 5: on `/mcp`, 401 and 403 are written before the SDK, never `200` + `isError`; the 403 lists every still-needed scope plus `resource_metadata`.
+- Invariant 5 on the public lane: it never challenges, and serves nothing a scope would guard (D-26).
+- Invariant 14 on the public lane: `tools/call` per IP prefix and per lane, both bounded maps; the handshake is never limited.
 - Invariant 6: no `Mcp-Session-Id`, no session map, GET/DELETE 405; `prompts` and `resources` declared and empty.
 - Invariant 9: tools published from the raw schema; write tools are never filtered for a missing write scope (`registry.listFor` owns the listing rule).
 - Invariant 10: `decideOrigin` as above; over-strict validation causes claude.ai initialize timeouts.
@@ -73,9 +86,9 @@ Every event carries the request correlation (`xs`, `login_id`, `grant_id`, `pers
 - Invariant 7: no token reaches a log line or an event. A-28, A-29: `clientInfo` and `User-Agent` are displayed and logged, never gated on.
 
 ## How to test
-- `npx vitest run src/mcp` - 78 tests in 4 files (gate, protocol, sessions, events); the harness validates every emitted event against `XrayEventSchema`.
+- `npx vitest run src/mcp` - 90 tests in 5 files (gate, protocol, sessions, events, public-lane); the harness validates every emitted event against `XrayEventSchema` and can mount the public lane with a fake `PublicToolRegistry` (`publicLane: {}`, `publicRpc`).
 - The harness mounts the `res.locals.requestId` of `src/app.ts` as a sentinel ahead of the handler, so a test sees the same two ids a live server has: `ToolContext.requestId` must be the JSON-RPC id, never the HTTP one, or the tools block's events stop nesting under their call.
-- `npm run e2e:oauth` (SDK client through `initialize`, `tools/list`, `tools/call`) and `npm run e2e:session` (the 403 step-up, the full tool walk).
+- `npm run e2e:oauth` (SDK client through `initialize`, `tools/list`, `tools/call`), `npm run e2e:session` (the 403 step-up, the full tool walk) and `npm run e2e:public` (an SDK client with no OAuth on `/public/mcp`, 23 checks with the X-ray export).
 - `npx @modelcontextprotocol/inspector --cli --transport http --server-url http://localhost:8080/mcp --method tools/list`.
 
 ## Known gaps
@@ -86,3 +99,4 @@ Every event carries the request correlation (`xs`, `login_id`, `grant_id`, `pers
 - The `xs` is decided before the persona lookup, so a grant whose generated persona vanished after a restart opens a session and then answers 401.
 - `catalog.tools_listed` elision is per grant, not per `xs`; the read model resolves an elided array by `content_hash`.
 - The header comment of `bootstrap-tools.ts` still promises the file is deleted at I1; it is not.
+- A public visitor is its IP prefix and User-Agent: every claude.ai user behind Anthropic's egress with the same User-Agent shares one visitor, one session and one per-IP budget (A-48).

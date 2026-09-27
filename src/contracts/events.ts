@@ -548,6 +548,13 @@ export const BANK_OPERATIONS = [
   'transfer.confirm',
   'audit.append',
   'overlay.reset',
+  // v0.7: the public lane's reads (`PublicBankInfo`, D-26); one per level of the catalog.
+  'public.profile',
+  'public.products',
+  'public.product',
+  'public.prices',
+  'public.branches',
+  'public.branch',
 ] as const;
 export type BankOperation = (typeof BANK_OPERATIONS)[number];
 
@@ -712,7 +719,11 @@ export const IntentMissingData = z.object({
 // xray.* (producer: xray)
 // ---------------------------------------------------------------------------
 
-export const ViewerKindSchema = z.enum(['pairing', 'admin']);
+/**
+ * v0.7: `public` is a reader of the public lane (`?lane=public`, no cookie), bound to
+ * `PUBLIC_LOGIN_ID` (D-26). Never carried by a viewer cookie.
+ */
+export const ViewerKindSchema = z.enum(['pairing', 'admin', 'public']);
 export type ViewerKind = z.infer<typeof ViewerKindSchema>;
 
 /** `xs=<id>`, `login=me` (every grant of the viewer's login) or `all=1` (observer mode). */

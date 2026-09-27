@@ -11,7 +11,7 @@ import {
 } from '../filters.js';
 import { codeFromUrl, isPairingCode, normalisePairingInput, pairingErrorText } from '../pairing.js';
 import { backoffMs, parseJsonl, RECONNECT_MAX_MS } from '../stream.js';
-import { detectBase, readQuery } from '../api.js';
+import { createApi, detectBase, readQuery, withLane } from '../api.js';
 import { duration, money, percentile, plural, ratio, seconds } from '../format.js';
 import { loadFixture } from './helpers.mjs';
 
@@ -123,7 +123,22 @@ describe('the stream client', () => {
       rate: 5,
       xs: null,
       all: false,
+      lane: null,
     });
+    expect(readQuery('?lane=public').lane).toBe('public');
+    expect(readQuery('?lane=private').lane).toBeNull();
+  });
+
+  it('adds lane=public to every read of the public lane, and nothing otherwise (D-26)', () => {
+    expect(withLane('/xray/api/me', 'public')).toBe('/xray/api/me?lane=public');
+    expect(withLane('/xray/api/catalog?xs=xs_1', 'public')).toBe('/xray/api/catalog?xs=xs_1&lane=public');
+    expect(withLane('/xray/api/me', null)).toBe('/xray/api/me');
+    const api = createApi('/xray', { lane: 'public' });
+    expect(api.streamUrl(null)).toBe('/xray/api/stream?login=me&lane=public');
+    expect(createApi('/xray').streamUrl(null)).toBe('/xray/api/stream?login=me');
+    // v0.8 (D-27): the export follows the lane like every other read.
+    expect(api.exportUrl()).toBe('/xray/api/export?lane=public');
+    expect(createApi('/xray').exportUrl()).toBe('/xray/api/export');
   });
 });
 

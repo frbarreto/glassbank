@@ -50,7 +50,7 @@ Steps, every one with `--project=lake-fraude --region=us-central1`:
 
 ## 4. Verify - `infra/smoke.sh [URL]` (`make smoke`)
 
-`./infra/smoke.sh` targets `status.url` (falling back to the deterministic URL); `bash infra/smoke.sh http://localhost:8080` targets a local server and gives 24 passed, 0 failed, 3 skipped (checks 1, 6 and 7 need public DNS or gcloud). It runs every check, prints the active Origin policy and exits 1 if any check failed. Knobs: `SMOKE_BASE_URL`, `SMOKE_HOSTS` (`;`- or space-separated), `CURL_TIMEOUT` (15 s), `DISCOVERY_BUDGET_S` (10), `REGISTER_ATTEMPTS` (30), `DRY_RUN=1`.
+`./infra/smoke.sh` targets `status.url` (falling back to the deterministic URL); `bash infra/smoke.sh http://localhost:8080` targets a local server and gives 29 passed, 0 failed, 3 skipped (checks 1, 6 and 7 need public DNS or gcloud; check 11 is the public lane, check 12 the export). It runs every check, prints the active Origin policy and exits 1 if any check failed. Knobs: `SMOKE_BASE_URL`, `SMOKE_HOSTS` (`;`- or space-separated), `CURL_TIMEOUT` (15 s), `DISCOVERY_BUDGET_S` (10), `REGISTER_ATTEMPTS` (30), `DRY_RUN=1`.
 
 | # | Asserts |
 |---|---|
@@ -64,6 +64,8 @@ Steps, every one with `--project=lake-fraude --region=us-central1`:
 | 8 | Each of the three discovery documents answers inside `DISCOVERY_BUDGET_S`. |
 | 9 | `REGISTER_ATTEMPTS` consecutive `POST /register` from one IP: no 429 and at least one success (A-43). |
 | 10 | `/xray/` and `/xray/app.js` answer 200; `/xray/api/me` answers 401 or 403, never 404 or 200 (invariant 11); `/` answers 200 and names `<base>/mcp`. |
+| 11 | `POST /public/mcp` initializes with no bearer and no `WWW-Authenticate`, lists the public tools and none of the signed-in ones; `/xray/api/me?lane=public` answers 200 with no cookie; skipped on a 404 (`PUBLIC_MCP=false`, D-26). |
+| 12 | `GET /xray/api/export?lane=public` answers 200 `application/x-ndjson` with no credential; `GET /xray/api/export` with none answers 401 (D-27). |
 
 ## 5. Roll back
 
@@ -83,7 +85,7 @@ make pause     # disable the uptime alert, delete the service: the bill for it s
 make resume    # redeploy the newest image in Artifact Registry (or RESUME_TAG), re-enable the alert
 ```
 
-`infra/pause.sh` behind both; `DRY_RUN=1` prints. Measured on 2026-09-26: `make pause` takes about 11 s, after which both hostnames answer Google's 404 and the domain mapping stays attached to the service name; `make resume` takes about 45 s, after which the custom hostname serves again at once (no new certificate) and the smoke passes 37 of 37; the revision numbering restarts at `00001` and `/health` shows a new `boot_id`. Paused, nothing is billed but cents of image storage: the domain mapping, the secrets, IAM, the images and the uptime check stay. A push to `main` while paused runs the tests and pushes the image but does not deploy (the pipeline's deploy job skips a push when the service is absent); the pipeline's **Run workflow** button in GitHub Actions resumes too, building the current `main`. `make resume` never rebuilds, and `deploy.sh` picks the mapped hostname as `PUBLIC_BASE_URL` when none is given, so both hostnames come back with the right OAuth identity. There is no softer pause: `--min-instances=0` would let the instance idle out and stop the heartbeats, TTL eviction and fan-out (invariant 2). Resuming costs users what a deploy costs; they may need to reconnect once.
+`infra/pause.sh` behind both; `DRY_RUN=1` prints. Measured on 2026-09-26: `make pause` takes about 11 s, after which both hostnames answer Google's 404 and the domain mapping stays attached to the service name; `make resume` takes about 45 s, after which the custom hostname serves again at once (no new certificate) and the smoke passes 37 of 37; the revision numbering restarts at `00001` and `/health` shows a new `boot_id`. Paused, nothing is billed but cents of image storage: the domain mapping, the secrets, IAM, the images and the uptime check stay. A push to `main` while paused runs the tests and pushes the image but does not deploy (the pipeline's deploy job skips a push when the service is absent); the pipeline's **Run workflow** button in GitHub Actions resumes too, building the current `main`. `make resume` never rebuilds, and `deploy.sh` picks the mapped hostname as `PUBLIC_BASE_URL` when none is given, so both hostnames come back with the right OAuth identity. There is no softer pause: `--min-instances=0` would let the instance idle out and stop the heartbeats, TTL eviction and fan-out (invariant 2). Resuming costs users what a deploy costs; they may need to reconnect once. A pause also erases the X-ray event log, which lives in memory: run `make xray-export` first if a session is worth keeping (section 18).
 
 ## 7. Rotate the signing key and the admin token
 
@@ -118,13 +120,15 @@ Every cap and rate limit is an env var (section 11; invariant 14), but `deploy.s
 | 429 on `/authorize` during OAuth | `RATE_LIMIT_IP_AUTHORIZE` | 300/15 min | up |
 | 429 on `/token` or `/revoke` | `RATE_LIMIT_IP_TOKEN`, `RATE_LIMIT_CLIENT_TOKEN` | 300, 120 per 15 min | up |
 | One conversation is throttled | `RATE_LIMIT_GRANT_TOOL_CALLS` | 120/min | up |
+| Public-lane agents get 429 | `RATE_LIMIT_PUBLIC_IP_TOOL_CALLS`, `RATE_LIMIT_PUBLIC_TOOL_CALLS` | 60, 600 per min | up for claude.ai (one egress, A-48); the lane-wide one down if the signed-in demo slows |
+| Strangers on the public lane crowd the instance | `PUBLIC_MCP` | `true` | `false` switches `/public/mcp` off (404) and drops it from the landing page |
 | Memory climbing, many scratch tables | `MAX_SCRATCH_DBS`, `MAX_TABLES_PER_GRANT`, `TABLE_TTL_MINUTES` | 200, 10, 30 | down |
 | Memory climbing, many personas | `MAX_MATERIALISED_PERSONAS`, `MAX_PERSONA_OVERLAYS`, `PERSONA_OVERLAY_TTL_HOURS` | 200, 1000, 24 | down |
 | Model queries time out too often | `QUERY_TIMEOUT_MS` | 2000 | up, carefully - CPU on a shared singleton |
 | Results truncated too aggressively | `MAX_QUERY_ROWS` | 100 | up, carefully - rows land in the model's context |
 | Event log growing | `XRAY_RETENTION_HOURS`, `XRAY_MAX_LOG_ROWS` | 72, 200000 | down |
 | Registration table growing | `MAX_DCR_CLIENTS` | 1000 | down |
-| Dashboard streams refused with 429 | `XRAY_MAX_STREAMS_PER_LOGIN`, `XRAY_MAX_STREAMS` | 4, 64 | up, inside `--concurrency=250` |
+| Dashboard streams refused with 429 | `XRAY_MAX_STREAMS_PER_LOGIN`, `XRAY_MAX_STREAMS`, `XRAY_MAX_PUBLIC_STREAMS` | 4, 64, 16 | up, inside `--concurrency=250`; the public one stays well under `XRAY_MAX_STREAMS` so paired viewers keep room |
 
 ## 10. Diagnose a connector failure
 
@@ -146,7 +150,7 @@ A claude.ai failure id starts with `ofid_` (in the error toast URL). Record ever
 
 ## 11. Environment
 
-Parsed once in `src/config/index.ts` (zod; one `ConfigError` lists every problem); `.env.example` carries exactly the same 38 names and a test asserts the parity. Defaults below are the code's; `.env.example` differs only where noted. `*` = set by `deploy.sh`; `(secret)` = injected by `--set-secrets`; `PORT` is injected by Cloud Run.
+Parsed once in `src/config/index.ts` (zod; one `ConfigError` lists every problem); `.env.example` carries exactly the same 42 names and a test asserts the parity. Defaults below are the code's; `.env.example` differs only where noted. `*` = set by `deploy.sh`; `(secret)` = injected by `--set-secrets`; `PORT` is injected by Cloud Run.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -157,6 +161,7 @@ Parsed once in `src/config/index.ts` (zod; one `ConfigError` lists every problem
 | `PUBLIC_HOSTS` * | empty (`.env.example`: `localhost:8080`) | `;`-separated hostnames the service answers on; the base URL's host is always added; PRM `resource`, issuer and `aud` follow a listed `Host` (invariant 4, A-36) |
 | `ORIGIN_POLICY` * | `log-only` | `log-only` or `allowlist` (section 8) |
 | `FEATURE_FLAGS` * | `writes;transfers` | `;`-separated flags; write tools are listed only while their flag is on (D-3) |
+| `PUBLIC_MCP` | `true` | serve the sign-in-free public lane at `/public/mcp` (D-26, ADR-19) |
 | `OAUTH_SIGNING_KEY` (secret) | `dev-only-insecure-signing-key-change-me-32+` | HS256 key for every JWT, at least 32 chars; the default is refused in production |
 | `XRAY_ADMIN_TOKEN` (secret) | unset (`.env.example`: `dev-only-insecure-admin-token-change-me-32+`) | observer-mode token, at least 32 chars; unset disables observer mode; the `.env.example` value is refused in production |
 | `XRAY_DB_PATH` * | `/tmp/xray.sqlite` | event-log SQLite file (WAL); `/tmp` is memory-backed on Cloud Run |
@@ -165,6 +170,7 @@ Parsed once in `src/config/index.ts` (zod; one `ConfigError` lists every problem
 | `XS_IDLE_GAP_MINUTES` | `15` | silence after which a grant's next request starts a new X-ray session `xs` |
 | `XRAY_MAX_STREAMS_PER_LOGIN` | `4` | concurrent dashboard SSE streams per login (then 429 + `Retry-After`) |
 | `XRAY_MAX_STREAMS` | `64` | concurrent dashboard SSE streams per process |
+| `XRAY_MAX_PUBLIC_STREAMS` | `16` | concurrent public-lane streams (`?lane=public`, no cookie), every reader together, inside `XRAY_MAX_STREAMS` |
 | `AUTH_DB_PATH` * | `/tmp/auth.sqlite` | SQLite file for the DCR client table |
 | `MAX_DCR_CLIENTS` | `1000` | bounded LRU of registered OAuth clients |
 | `CIMD_ENABLED` | `false` | reserved for `client_id_metadata_document_supported`; parsed but read by no block yet (A-37) |
@@ -187,6 +193,8 @@ Parsed once in `src/config/index.ts` (zod; one `ConfigError` lists every problem
 | `RATE_LIMIT_CLIENT_TOKEN` | `120` | `/token` per `client_id` or `grant_id` per 15 min |
 | `RATE_LIMIT_GRANT_TOOL_CALLS` | `120` | `tools/call` per grant per minute |
 | `RATE_LIMIT_LOGIN_GRANTS` | `20` | new grants per `login_id` per day; a step-up that extends a grant is free (ADR-14) |
+| `RATE_LIMIT_PUBLIC_IP_TOOL_CALLS` | `60` | public-lane `tools/call` per IP prefix per minute; never the handshake (D-26) |
+| `RATE_LIMIT_PUBLIC_TOOL_CALLS` | `600` | public-lane `tools/call` per minute across every visitor (D-26) |
 | `SNAPSHOT_BUCKET` | unset | GCS bucket for event-log snapshots (D-6); parsed, read by nothing yet |
 
 ## 12. VM alternative (removed)
@@ -201,6 +209,7 @@ A Compute Engine alternative (Caddy plus the same image) lived in `infra/vm/` un
 3. Consent lists the scopes: read scopes pre-checked, `cards:write` and `transfers:write` unchecked. A later 403 `insufficient_scope` re-opens consent, and the same browser extends the same grant (invariant 15).
 4. Enable the connector in a chat and ask for balances; "show me what is happening behind the scenes" calls `xray_get_session_link`, which returns `<url>/xray/s/BANK-XXXX-XXXX-XX`, bound to the login rather than one grant (invariant 11).
 5. Claude Code: `claude mcp add --transport http glass-bank <url>/mcp`, then `/mcp` to log in.
+5b. The public lane (D-26) is a second connector: URL `<url>/public/mcp`, Authentication **None** in claude.ai; `claude mcp add --transport http glass-bank-public <url>/public/mcp` in Claude Code, no login. Its calls show at `<url>/xray/?lane=public` for anyone.
 6. No claude.ai or Claude Code client has connected yet; Codex and ChatGPT have, through the tunnel (`docs/observations/claude-ai.md`).
 
 ## 14. Local testing through a tunnel
@@ -234,3 +243,37 @@ Done on 2026-09-26: mapping and record created at 19:23 UTC, `CertificateProvisi
 ## 17. Uptime check and alert - `infra/observe.sh`
 
 Cloud Monitoring, inside the free tier: an email notification channel "Glass Bank alerts" (the address is the active gcloud account, passed on the command line and never written to the repository), the uptime check `glass-bank-health` (GET `https://mcp-bank-520283334162.us-central1.run.app/health` every 5 minutes, 10 s timeout, expects 200 and `"status":"ok"`), and the alert policy "Glass Bank /health down" (an incident plus an email after 10 minutes of failures). Idempotent; `DRY_RUN=1` prints. Created on 2026-09-26. `make pause` disables the alert policy before deleting the service and `make resume` re-enables it, so a planned pause sends no email. Console: https://console.cloud.google.com/monitoring/uptime?project=lake-fraude
+
+## 18. Keep the event log - `infra/export.sh` (`make xray-export`)
+
+Two places record what the MCP did:
+
+| Where | What | How long |
+|---|---|---|
+| The X-ray log: SQLite at `XRAY_DB_PATH` (`/tmp/xray.sqlite`) plus the last 10,000 events in memory | Every event: HTTP requests, sessions, `tools/list`, each call with its arguments and `rationale`, the `bank.*`, `etl.*` and `sql.*` it caused, results previewed at 2,048 chars, OAuth, pairing. Secrets never stored, IPs as a prefix. | 72 h or 200,000 rows (`XRAY_RETENTION_HOURS`, `XRAY_MAX_LOG_ROWS`), and on Cloud Run `/tmp` is memory: gone on every restart, push to `main` and `make pause` |
+| stdout, collected by Cloud Logging | One JSON line per `/mcp` and `/public/mcp` request (`event: "http.request"`): method, path, status, duration, User-Agent, IP prefix, Origin, JSON-RPC methods, tool names, `clientInfo`, `grant_id`, `xs`. No arguments, no rationale. | 30 days (the `_Default` bucket); survives restarts and pauses |
+
+`GET /xray/api/export` (D-27, contracts v0.8) downloads the X-ray log as JSONL: one event per line, oldest first, verbatim, in the line format of `test/fixtures/events.jsonl`. Scopes: `?lane=public` needs no credential; a pairing cookie gets its own login; the admin token, as a cookie or as `Authorization: Bearer`, gets everything. `?after=<id>` returns only newer events, `?xs=<id>` one session. The dashboard's Sessions panel has the same download as "Download log (JSONL)".
+
+```
+make xray-export                                     # the live log, everything; the token comes from Secret Manager
+EXPORT_QUERY='after=4211' make xray-export           # only what came after the last line of the previous file
+EXPORT_QUERY='lane=public' ./infra/export.sh         # the public lane only, no token
+XRAY_ADMIN_TOKEN=<token> ./infra/export.sh http://localhost:8080   # a local server started with the same XRAY_ADMIN_TOKEN
+curl -o public.jsonl 'https://glassbank-mcp.abovethefog.app/xray/api/export?lane=public'   # no script needed without a token
+```
+
+The script writes `exports/xray-<host>-<UTC stamp>[-<query>].jsonl` (git-ignored), prints the event count and the last id, and never puts the token on a command line or on disk. Reading a file:
+
+```
+jq -c 'select(.type == "tool.call.started") | {ts, xs, tool: .data.tool, rationale: .data.rationale}' exports/<file>.jsonl
+jq -r '.type' exports/<file>.jsonl | sort | uniq -c | sort -rn     # what happened, by event type
+```
+
+The request lines of Cloud Logging, for anything older than the X-ray log:
+
+```
+gcloud run services logs read mcp-bank --region=us-central1 --limit=200
+gcloud logging read 'resource.labels.service_name="mcp-bank" AND jsonPayload.event="http.request"' --project=lake-fraude --freshness=7d --format=json
+```
+

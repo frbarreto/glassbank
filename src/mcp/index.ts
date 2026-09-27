@@ -22,7 +22,7 @@
  * dashboard viewer attached.
  */
 import express from 'express';
-import type { NextFunction, Request, RequestHandler, Response, Router } from 'express';
+import type { Request, RequestHandler, Response, Router } from 'express';
 
 import {
   ClientInfoSchema,
@@ -34,6 +34,8 @@ import {
   type AuthContext,
   type ClientInfo,
   type FeatureFlag,
+  type PublicBankInfo,
+  type PublicToolRegistry,
   type Scope,
   type ToolRegistry,
   type VerifyAccessToken,
@@ -41,7 +43,6 @@ import {
   type XrayEmitter,
 } from '../contracts/index.js';
 
-import { BoundedSessionMap } from './bounded-map.js';
 import { bootstrapCall, bootstrapListFor } from './bootstrap-tools.js';
 import { createCatalogMemory } from './catalog-memory.js';
 import {
@@ -54,7 +55,17 @@ import {
   sendUnauthorized,
   summariseJsonRpc,
 } from './gate.js';
+import {
+  createMcpCors,
+  createMethodNotAllowed,
+  createParseErrorObserver,
+  createWindowLimiter,
+  httpRequestFacts,
+  ipPrefixOf,
+  registerPreflight,
+} from './http.js';
 import { createInFlightCalls } from './in-flight.js';
+import { createPublicLane, type PublicLaneHandler } from './public-lane.js';
 import { createSessionManager, type EndedSession, type SessionManager } from './sessions.js';
 import { createTransport, negotiateProtocolVersion, type ToolPort } from './transport.js';
 import type {
@@ -63,6 +74,8 @@ import type {
   McpLogRecord,
   McpLogger,
   PersonaLookup,
+  ToolCallBase,
+  ToolContextBase,
   ToolContextFactory,
 } from './types.js';
 import { eraOf, withCorrelation } from './xray.js';
@@ -95,6 +108,18 @@ export interface McpDeps {
   readonly now?: () => Date;
   /** 0 disables the periodic idle sweep; tests drive `sweep()` by hand instead. */
   readonly sweepIntervalMs?: number;
+  /**
+   * v0.7, D-26: the public lane `src/app.ts` mounts at `PUBLIC_MCP_PATH`. Absent when
+   * `PUBLIC_MCP=off`; then `McpHandle.publicLane` is `null` and nothing is mounted.
+   */
+  readonly publicLane?: {
+    readonly registry: PublicToolRegistry;
+    readonly info: PublicBankInfo;
+    /** `RATE_LIMIT_PUBLIC_IP_TOOL_CALLS`. */
+    readonly ipToolCallsPerMin: number;
+    /** `RATE_LIMIT_PUBLIC_TOOL_CALLS`. */
+    readonly toolCallsPerMin: number;
+  };
 }
 
 /**
@@ -111,7 +136,14 @@ export interface McpHandle {
   /** Closes idle sessions now; the periodic sweep calls it. Returns how many it closed. */
   sweep(): number;
   sessions: SessionManager;
-  stats(): { sessions: number; callsInFlight: number; catalogsRemembered: number };
+  /** The sign-in-free endpoint (D-26), or `null` when it is switched off. */
+  publicLane: PublicLaneHandler | null;
+  stats(): {
+    sessions: number;
+    callsInFlight: number;
+    catalogsRemembered: number;
+    publicSessions: number;
+  };
 }
 
 export type McpHandler = RequestHandler & McpHandle;
@@ -123,38 +155,27 @@ const defaultLogger = (record: McpLogRecord): void => {
 /** An emitter that drops everything, so the block runs before `src/xray` is wired. */
 const silentEmitter: XrayEmitter = { emit: () => undefined };
 
-/** Only the `/24` prefix of a caller's address is ever logged (invariant 11). */
-function ipPrefixOf(address: string | null | undefined): string | null {
-  if (!address) return null;
-  const plain = address.startsWith('::ffff:') ? address.slice('::ffff:'.length) : address;
-  const octets = plain.split('.');
-  if (octets.length === 4 && octets.every((octet) => /^\d{1,3}$/.test(octet))) {
-    return `${octets[0]}.${octets[1]}.${octets[2]}.0/24`;
-  }
-  const hextets = plain.split(':').filter(Boolean);
-  return hextets.length === 0 ? null : `${hextets.slice(0, 3).join(':')}::/48`;
-}
-
-/** A fixed-window counter per grant for `tools/call` (invariant 14, `RATE_LIMIT_GRANT_TOOL_CALLS`). */
-function createGrantLimiter(limitPerMinute: number, now: () => Date) {
-  const windows = new BoundedSessionMap<string, { count: number; startedAt: number }>(5000);
-  return function hit(grantId: string): boolean {
-    const currentTime = now().getTime();
-    const existing = windows.get(grantId);
-    const window =
-      existing === undefined || currentTime - existing.startedAt >= 60_000
-        ? { count: 0, startedAt: currentTime }
-        : existing;
-    window.count += 1;
-    windows.set(grantId, window);
-    return window.count > limitPerMinute;
-  };
-}
-
 /**
  * Adapts the injected `ToolRegistry` onto the transport's port, or falls back to the two tools
  * this block can answer alone (`src/mcp/bootstrap-tools.ts`).
  */
+/**
+ * The half of a `ToolContext` this block builds, from what the transport hands a port. The
+ * signed-in catalog is only ever reached through the bearer gate, so `auth` is always set here;
+ * a `null` would be a wiring mistake, not a caller to serve.
+ */
+function signedInBase(base: ToolCallBase): ToolContextBase {
+  if (base.auth === null) throw new Error('the signed-in catalog was called without an AuthContext');
+  return {
+    auth: base.auth,
+    xray: base.xray,
+    featureFlags: base.featureFlags,
+    now: base.now,
+    requestId: base.requestId,
+    publicBaseUrl: base.publicBaseUrl,
+  };
+}
+
 function toolPortFor(deps: McpDeps): ToolPort {
   const { registry, toolContext } = deps;
   if (registry === undefined) {
@@ -166,7 +187,7 @@ function toolPortFor(deps: McpDeps): ToolPort {
       // "hidden by a feature flag", which are the same `-32601` to the client but not to the log.
       catalog: TOOL_CATALOG,
       listFor: bootstrapListFor,
-      call: (name, args, context) => Promise.resolve(bootstrapCall(name, args, context)),
+      call: (name, args, base) => Promise.resolve(bootstrapCall(name, args, signedInBase(base))),
     };
   }
   if (toolContext === undefined) {
@@ -177,7 +198,8 @@ function toolPortFor(deps: McpDeps): ToolPort {
   return {
     catalog: registry.catalog,
     listFor: (grant, flags) => registry.listFor(grant, flags),
-    call: async (name, args, base) => registry.call(name, args, await toolContext(base)),
+    call: async (name, args, base) =>
+      registry.call(name, args, await toolContext(signedInBase(base))),
   };
 }
 
@@ -199,7 +221,28 @@ export function createMcp(deps: McpDeps): McpHandler {
     counters: sessions,
     now,
   });
-  const hitGrantLimit = createGrantLimiter(config.grantToolCallsPerMin, now);
+  // A fixed window per grant for `tools/call` (invariant 14, `RATE_LIMIT_GRANT_TOOL_CALLS`).
+  const hitGrantLimit = createWindowLimiter(config.grantToolCallsPerMin, now);
+  const sweepEvery = deps.sweepIntervalMs ?? SESSION_SWEEP_INTERVAL_MS;
+  const publicLane =
+    deps.publicLane === undefined
+      ? null
+      : createPublicLane({
+          config: {
+            publicBaseUrl: config.publicBaseUrl,
+            publicHosts: config.publicHosts,
+            originPolicy: config.originPolicy,
+            xsIdleGapMinutes: config.xsIdleGapMinutes,
+            ipToolCallsPerMin: deps.publicLane.ipToolCallsPerMin,
+            toolCallsPerMin: deps.publicLane.toolCallsPerMin,
+          },
+          registry: deps.publicLane.registry,
+          info: deps.publicLane.info,
+          xray,
+          log,
+          now,
+          sweepIntervalMs: sweepEvery,
+        });
 
   /** `session.ended` for a segment the idle gap or the shutdown closed (section 4). */
   function emitSessionEnded(ended: EndedSession, reason: EndedSession['reason']): void {
@@ -231,12 +274,11 @@ export function createMcp(deps: McpDeps): McpHandler {
     return closed.length;
   }
 
-  const sweepIntervalMs = deps.sweepIntervalMs ?? SESSION_SWEEP_INTERVAL_MS;
   const sweepTimer =
-    sweepIntervalMs > 0
+    sweepEvery > 0
       ? setInterval(() => {
           sweep();
-        }, sweepIntervalMs)
+        }, sweepEvery)
       : null;
   // Unref'd: an idle sweep must never be the reason the process stays alive (invariant 12).
   sweepTimer?.unref();
@@ -247,100 +289,17 @@ export function createMcp(deps: McpDeps): McpHandler {
   /** Requests whose `http.request` has already been arranged, so it is emitted exactly once. */
   const observed = new WeakSet<Response>();
 
-  /**
-   * The CORS headers every `/mcp` answer carries, preflight and real response alike.
-   *
-   * Setting them only on the OPTIONS preflight made the transport look CORS-enabled while a
-   * browser still blocked every actual response: the 401 that starts auth, the 403 step-up and
-   * the 405 all arrived without `Access-Control-Allow-Origin`, so JavaScript could never read
-   * `WWW-Authenticate` and the MCP Inspector UI could not connect at all. claude.ai's connector
-   * fetches server-side and was unaffected, which is what hid this.
-   *
-   * The origin is echoed only when the Origin policy of invariant 10 allows it. No
-   * `Access-Control-Allow-Credentials`: this transport authenticates with a bearer token, never
-   * with a cookie.
-   */
-  function applyMcpCors(request: Request, response: Response): void {
-    response.setHeader('Vary', 'Origin');
-    response.setHeader(
-      'Access-Control-Expose-Headers',
-      'WWW-Authenticate, x-request-id, mcp-protocol-version',
-    );
-    const origin = request.get('origin');
-    if (origin === undefined || origin.length === 0) {
-      response.setHeader('Access-Control-Allow-Origin', '*');
-      return;
-    }
-    const baseUrl = baseUrlForRequest(request, config);
-    if (decideOrigin(origin, baseUrl, config.originPolicy).allowed) {
-      response.setHeader('Access-Control-Allow-Origin', origin);
-    }
-  }
-
-  /** Browser-based clients (the Inspector UI) preflight `/mcp`. */
-  router.options('/', (request: Request, response: Response) => {
-    applyMcpCors(request, response);
-    response.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    response.setHeader(
-      'Access-Control-Allow-Headers',
-      'authorization, content-type, mcp-protocol-version, last-event-id, x-request-id',
-    );
-    response.status(204).end();
+  // CORS on every answer, the preflight, and 405 for GET and DELETE (`http.ts`, invariant 6).
+  const applyMcpCors = createMcpCors(config);
+  registerPreflight(router, applyMcpCors);
+  const methodNotAllowed = createMethodNotAllowed({
+    config,
+    now,
+    log,
+    xray,
+    observed,
+    applyCors: applyMcpCors,
   });
-
-  /**
-   * Invariant 6: no GET stream and nothing to DELETE. `Allow: POST` tells a client that probes
-   * the legacy SSE transport exactly what this server speaks.
-   */
-  const methodNotAllowed: RequestHandler = (request: Request, response: Response) => {
-    const startedAt = now().getTime();
-    observed.add(response);
-    applyMcpCors(request, response);
-    response.setHeader('Allow', 'POST');
-    const record = {
-      event: 'http.request',
-      ts: now().toISOString(),
-      method: request.method,
-      path: request.originalUrl,
-      status: 405,
-      user_agent: request.get('user-agent') ?? null,
-      origin: request.get('origin') ?? null,
-      mcp_protocol_version_header: request.get('mcp-protocol-version') ?? null,
-      mcp_session_id: request.get('mcp-session-id') ?? null,
-    };
-    log(record);
-    const remoteIp = request.ip ?? request.socket.remoteAddress ?? null;
-    xray.emit('http.request', {
-      method: request.method,
-      path: request.originalUrl,
-      status: 405,
-      duration_ms: Math.max(0, now().getTime() - startedAt),
-      user_agent: record.user_agent,
-      remote_ip_prefix: ipPrefixOf(remoteIp),
-      anthropic_egress: isAnthropicEgress(remoteIp),
-      origin: record.origin,
-      origin_decision: decideOrigin(
-        request.get('origin'),
-        baseUrlForRequest(request, config),
-        config.originPolicy,
-      ).decision,
-      mcp_protocol_version_header: record.mcp_protocol_version_header,
-      mcp_session_id: record.mcp_session_id,
-      has_authorization: request.get('authorization') !== undefined,
-      content_type: request.get('content-type') ?? null,
-      sse: false,
-      rate_limited: false,
-    });
-    response.status(405).json({
-      jsonrpc: '2.0',
-      error: {
-        code: -32000,
-        message:
-          'Method not allowed. This server speaks stateless Streamable HTTP: send JSON-RPC with POST. It issues no Mcp-Session-Id and serves no GET stream.',
-      },
-      id: null,
-    });
-  };
   router.get('/', methodNotAllowed);
   router.delete('/', methodNotAllowed);
 
@@ -404,23 +363,12 @@ export function createMcp(deps: McpDeps): McpHandler {
       });
       xray.emit(
         'http.request',
-        {
-          method: request.method,
-          path: request.originalUrl,
+        httpRequestFacts(request, config, {
           status,
-          duration_ms: durationMs,
-          user_agent: request.get('user-agent') ?? null,
-          remote_ip_prefix: ipPrefixOf(remoteIp),
-          anthropic_egress: isAnthropicEgress(remoteIp),
-          origin: origin ?? null,
-          origin_decision: originDecision.decision,
-          mcp_protocol_version_header: request.get('mcp-protocol-version') ?? null,
-          mcp_session_id: request.get('mcp-session-id') ?? null,
-          has_authorization: request.get('authorization') !== undefined,
-          content_type: request.get('content-type') ?? null,
+          durationMs,
           sse: contentType.includes('text/event-stream'),
-          rate_limited: rateLimited,
-        },
+          rateLimited,
+        }),
         correlation,
       );
     });
@@ -589,6 +537,8 @@ export function createMcp(deps: McpDeps): McpHandler {
     try {
       const outcome = await transport.handle(request, response, request.body, {
         auth,
+        grantId: claims.grant_id,
+        grant: { scopes: auth.scopes, auth_level: auth.auth_level },
         featureFlags,
         // The JSON-RPC id, never `res.locals.requestId`. The envelope defines `request_id` as the
         // JSON-RPC id (`src/contracts/events.ts`), `tool.call.started` is emitted with exactly
@@ -652,56 +602,8 @@ export function createMcp(deps: McpDeps): McpHandler {
     }
   }
 
-  /**
-   * Observes a request that never reached `handlePost`.
-   *
-   * `express.json` rejects a body that is not JSON (400) or larger than 4 MB (413) before any
-   * handler runs, and `src/app.ts` owns the response it produces. Without this the frame would
-   * be invisible to the dashboard: no `http.request`, no `protocol.error`, nothing to explain a
-   * client that has started sending rubbish. `next(error)` is still called, so the response is
-   * unchanged - this only watches.
-   */
-  router.use((error: unknown, request: Request, response: Response, next: NextFunction) => {
-    if (observed.has(response)) {
-      next(error);
-      return;
-    }
-    observed.add(response);
-    const startedAt = now().getTime();
-    const message = error instanceof Error ? error.message : 'the request body could not be read';
-    xray.emit('protocol.error', {
-      'mcp.method.name': null,
-      // -32700 is a body that is not JSON at all; anything else that stopped the parser is an
-      // invalid request (an over-large payload, a wrong content type).
-      code: error instanceof SyntaxError ? -32700 : -32600,
-      message,
-    });
-    const remoteIp = request.ip ?? request.socket.remoteAddress ?? null;
-    response.on('finish', () => {
-      xray.emit('http.request', {
-        method: request.method,
-        path: request.originalUrl,
-        status: response.statusCode,
-        duration_ms: Math.max(0, now().getTime() - startedAt),
-        user_agent: request.get('user-agent') ?? null,
-        remote_ip_prefix: ipPrefixOf(remoteIp),
-        anthropic_egress: isAnthropicEgress(remoteIp),
-        origin: request.get('origin') ?? null,
-        origin_decision: decideOrigin(
-          request.get('origin'),
-          baseUrlForRequest(request, config),
-          config.originPolicy,
-        ).decision,
-        mcp_protocol_version_header: request.get('mcp-protocol-version') ?? null,
-        mcp_session_id: request.get('mcp-session-id') ?? null,
-        has_authorization: request.get('authorization') !== undefined,
-        content_type: request.get('content-type') ?? null,
-        sse: false,
-        rate_limited: false,
-      });
-    });
-    next(error);
-  });
+  // A body `express.json` refused still gets `protocol.error` and `http.request` (`http.ts`).
+  router.use(createParseErrorObserver({ config, now, xray, observed }));
 
   const handle = router as unknown as McpHandler;
   handle.shutdown = (reason: 'server_stopping' = 'server_stopping') => {
@@ -709,14 +611,21 @@ export function createMcp(deps: McpDeps): McpHandler {
     const callsCancelled = inFlight.cancelAll('server_stopping');
     const closed = sessions.endAll(reason);
     for (const ended of closed) emitSessionEnded(ended, 'server_stopping');
-    return { sessions_ended: closed.length, calls_cancelled: callsCancelled };
+    const lane = publicLane?.shutdown(reason) ?? { sessions_ended: 0, calls_cancelled: 0 };
+    return {
+      sessions_ended: closed.length + lane.sessions_ended,
+      calls_cancelled: callsCancelled + lane.calls_cancelled,
+    };
   };
+  // The public lane runs its own sweep timer; this one is the signed-in endpoint's.
   handle.sweep = sweep;
   handle.sessions = sessions;
+  handle.publicLane = publicLane;
   handle.stats = () => ({
     sessions: sessions.size,
     callsInFlight: inFlight.size,
     catalogsRemembered: catalogMemory.size,
+    publicSessions: publicLane?.sessions.size ?? 0,
   });
   return handle;
 }
@@ -731,6 +640,16 @@ export {
 } from './bootstrap-tools.js';
 export { SERVER_INSTRUCTIONS, SERVER_INFO } from './instructions.js';
 export { createSessionManager } from './sessions.js';
+export {
+  createPublicLane,
+  visitorGrantId,
+  PUBLIC_BODY_LIMIT,
+  type PublicLaneConfig,
+  type PublicLaneDeps,
+  type PublicLaneHandle,
+  type PublicLaneHandler,
+} from './public-lane.js';
+export { PUBLIC_SERVER_INFO, PUBLIC_SERVER_INSTRUCTIONS } from './instructions.js';
 export { catalogRowsOf, eraOf, inputSchemaHash, withCorrelation } from './xray.js';
 export type { ToolPort, TransportOutcome, TransportRequestContext } from './transport.js';
 export type { EndedSession, SessionManager, SessionState } from './sessions.js';

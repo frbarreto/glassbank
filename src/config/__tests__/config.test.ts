@@ -17,6 +17,9 @@ describe('loadConfig defaults (docs/DEPLOYMENT.md section 3)', () => {
     expect(config.originPolicy).toBe('log-only');
     // Decision D-3: write tools are on by default.
     expect(config.featureFlags).toEqual(['writes', 'transfers']);
+    // D-26: the public lane is served unless PUBLIC_MCP=false.
+    expect(config.publicMcp).toBe(true);
+    expect(config.xrayMaxPublicStreams).toBe(16);
 
     expect(config.xrayDbPath).toBe('/tmp/xray.sqlite');
     expect(config.xrayRetentionHours).toBe(72);
@@ -47,10 +50,16 @@ describe('loadConfig defaults (docs/DEPLOYMENT.md section 3)', () => {
       clientTokenPer15Min: 120,
       grantToolCallsPerMin: 120,
       loginGrantsPerDay: 20,
+      publicIpToolCallsPerMin: 60,
+      publicToolCallsPerMin: 600,
     });
 
     expect(config.snapshotBucket).toBeUndefined();
     expect(config.xrayAdminToken).toBeUndefined();
+  });
+
+  it('switches the public lane off with PUBLIC_MCP=false (D-26)', () => {
+    expect(loadConfig({ PUBLIC_MCP: 'false' }).publicMcp).toBe(false);
   });
 
   it('always accepts the host of PUBLIC_BASE_URL and splits PUBLIC_HOSTS on ";"', () => {

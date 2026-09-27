@@ -13,6 +13,7 @@
 import { cx, h } from './h.js';
 import { button, tag } from './ui.js';
 import { clockTime, count, expiry, money, plural } from './format.js';
+import { PUBLIC_LOGIN_ID } from './api.js';
 
 /** `bank.op` operations after which the balances or card states may have changed. */
 export const BANK_REFRESH_OPERATIONS = new Set([
@@ -160,11 +161,26 @@ function balances(payload) {
   );
 }
 
+/** The public lane's visitor (D-26): no persona, no balances, only what the bank publishes. */
+function publicVisitorCard(session) {
+  return h(
+    'section',
+    { class: 'persona-card is-public', 'aria-label': 'Anonymous visitor' },
+    personaHead({ name: 'Anonymous visitor', kind: 'public lane', id: session.grant_id }),
+    h(
+      'p',
+      { class: 'persona-line muted' },
+      'No sign-in and no customer: this session called /public/mcp, which only reads what the bank publishes - its profile, products, prices and branches. A visitor is its IP prefix and User-Agent, hashed.',
+    ),
+  );
+}
+
 /** The whole card. */
 export function renderPersona(model) {
   const { store, view, now } = model;
   const xs = effectiveSessionXs(store, view);
   const session = xs ? store.getSession(xs) : null;
+  if (session && session.login_id === PUBLIC_LOGIN_ID) return publicVisitorCard(session);
   const stored = storedPersona(store, view, session);
   const bank = view.bank ?? {};
   const current = bank.xs === xs;

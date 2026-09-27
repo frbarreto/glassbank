@@ -5,10 +5,15 @@
  * The router is mounted at `/xray` by the composition root, so the paths here are the routes of
  * `XRAY_ROUTES` with that prefix removed - the constants stay the single source of truth.
  *
- * Two rules run through all of it (CLAUDE.md invariant 11):
- *   - nothing is answered without a viewer cookie, and a pairing cookie only ever sees the grants
- *     of its own login (`resolveScope` and `readModel.matchesScope` decide, never a query string);
- *   - an admin cookie sees everything, harder redacted (`applyObserverRedaction`).
+ * Three rules run through all of it (CLAUDE.md invariant 11):
+ *   - nothing private is answered without a viewer cookie, and a pairing cookie only ever sees the
+ *     grants of its own login (`resolveScope` and `readModel.matchesScope` decide);
+ *   - an admin cookie sees everything, harder redacted (`applyObserverRedaction`);
+ *   - `?lane=public` (v0.7, D-26) answers without a cookie for the public lane alone: the pseudo
+ *     login `PUBLIC_LOGIN_ID`, read-only, whose callers were told their calls are public.
+ *
+ * The export (v0.8, D-27) is the one exception to the second rule: it hands the operator the log
+ * verbatim, and it also takes the admin token as a bearer so a single `curl` downloads it.
  *
  * The SPA itself, `/xray/assets/*` and `/xray/fixtures/events.jsonl` belong to the `dashboard`
  * block: this router leaves those paths untouched so the static handler behind it answers them.
@@ -18,6 +23,8 @@ import type { Request, RequestHandler, Response, Router } from 'express';
 
 import {
   MAX_EVENTS_PAGE_LIMIT,
+  PUBLIC_LOGIN_ID,
+  XRAY_EXPORT_CONTENT_TYPE,
   XRAY_ROUTES,
   type PairResponse,
   type ViewerMeResponse,
@@ -30,6 +37,7 @@ import {
   type XrayDeleteResponse,
   type XraySessionBankResponse,
   type XraySessionsResponse,
+  type XrayEvent,
   type XrayViewerScope,
 } from '../contracts/index.js';
 
@@ -39,9 +47,15 @@ import type { XrayPairing } from './pairing.js';
 import type { ReadModel, SessionRow } from './read-model.js';
 import { applyObserverRedaction, ipPrefixOf } from './redaction.js';
 import type { Ring } from './ring.js';
-import { openSseStream, type SseStream } from './sse.js';
+import { logFilterFor, openSseStream, type SseStream } from './sse.js';
 import type { BankSummaryLookup, PersonaLookup, ViewerIdentity, XrayConfig } from './types.js';
-import { issueViewerCookie, readViewer, resolveScope } from './viewer.js';
+import {
+  issueViewerCookie,
+  publicLaneViewer,
+  readViewer,
+  resolveScope,
+  wantsPublicLane,
+} from './viewer.js';
 import type { JwtService } from '../contracts/index.js';
 
 const MOUNT_PREFIX = '/xray';
@@ -88,8 +102,37 @@ function ipPrefixOfRequest(request: Request): string | null {
  */
 function keyForStreamQuota(scope: XrayViewerScope): string {
   if (scope.viewer_kind === 'admin') return 'admin';
+  if (scope.viewer_kind === 'public') return 'public';
   if (scope.login_id !== null && scope.login_id !== undefined) return `lgn:${scope.login_id}`;
   return `xs:${scope.xs ?? 'unknown'}`;
+}
+
+/** Rows per SQLite page of an export: one page is parsed and written before the loop yields. */
+export const EXPORT_PAGE_ROWS = 1000;
+
+/** `glass-bank-xray-20260926T141500Z.jsonl`: sortable, and safe in a `Content-Disposition`. */
+function exportFileName(now: Date): string {
+  const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  return `glass-bank-xray-${stamp}.jsonl`;
+}
+
+/** The token of an `Authorization: Bearer <token>` header, or `null`. */
+function bearerOf(request: Request): string | null {
+  const match = /^Bearer\s+(\S+)\s*$/i.exec(request.get('authorization') ?? '');
+  return match?.[1] ?? null;
+}
+
+/** Resolves once the socket can take more, or once it is gone: a closed client must not hang us. */
+function drained(response: Response): Promise<void> {
+  return new Promise((resolve) => {
+    const done = (): void => {
+      response.off('drain', done);
+      response.off('close', done);
+      resolve();
+    };
+    response.on('drain', done);
+    response.on('close', done);
+  });
 }
 
 function firstString(value: unknown): string | null {
@@ -141,8 +184,13 @@ export function buildXrayRouter(runtime: XrayRoutesRuntime): Router {
   // Small bodies only: both POST routes carry one short string.
   router.use(express.json({ limit: '32kb' }));
 
-  /** Resolves the viewer cookie or answers 401. */
+  /** Resolves the viewer cookie or answers 401; `?lane=public` needs no cookie and ignores one. */
   const requireViewer: RequestHandler = (request, response, next) => {
+    if (wantsPublicLane(request.query as Record<string, unknown>)) {
+      response.locals.viewer = publicLaneViewer(runtime.now());
+      next();
+      return;
+    }
     void (async () => {
       const viewer = await readViewer(jwt, request);
       if (!viewer) {
@@ -166,10 +214,69 @@ export function buildXrayRouter(runtime: XrayRoutesRuntime): Router {
     return response.locals.viewer as ViewerIdentity;
   }
 
-  /** Resolves the scope for a request, answering the error itself when it cannot. */
-  /** Open SSE streams per quota key; see `keyForStreamQuota`. */
+  /** Open SSE streams and exports per quota key; see `keyForStreamQuota`. */
   const streamsByKey = new Map<string, number>();
 
+  /**
+   * The stream budget, shared by the SSE streams and the exports: both are long responses that
+   * hold a socket and a buffer. Answers the 429 itself and returns `null` when the budget is spent;
+   * otherwise returns the quota key to hold with `holdStreamSlot`.
+   */
+  function streamQuotaKeyOrRefuse(scope: XrayViewerScope, response: Response): string | null {
+    // Nothing else bounds these: each open stream owns a queue, and Cloud Run allows 250
+    // concurrent requests against 1 GiB. A viewer that stops reading must cost a bounded amount.
+    const streamKey = keyForStreamQuota(scope);
+    const perLogin = streamsByKey.get(streamKey) ?? 0;
+    if (runtime.streams.size >= runtime.config.xrayMaxStreams) {
+      response.setHeader('Retry-After', '5');
+      sendError(
+        response,
+        429,
+        'too_many_streams',
+        'This server is already serving as many live streams as it can. Retry in a few seconds.',
+      );
+      return null;
+    }
+    const perKeyCap =
+      scope.viewer_kind === 'public'
+        ? runtime.config.xrayMaxPublicStreams
+        : runtime.config.xrayMaxStreamsPerLogin;
+    if (perLogin >= perKeyCap) {
+      response.setHeader('Retry-After', '5');
+      sendError(
+        response,
+        429,
+        'too_many_streams',
+        'This login already has the maximum number of live dashboard streams open. Close one tab and retry.',
+      );
+      return null;
+    }
+    return streamKey;
+  }
+
+  /** Counts `handle` against `streamKey` until the request or the response closes. */
+  function holdStreamSlot(
+    streamKey: string,
+    handle: SseStream,
+    request: Request,
+    response: Response,
+  ): void {
+    runtime.streams.add(handle);
+    streamsByKey.set(streamKey, (streamsByKey.get(streamKey) ?? 0) + 1);
+    let forgotten = false;
+    const forget = (): void => {
+      if (forgotten) return; // `close` fires on both the request and the response.
+      forgotten = true;
+      runtime.streams.delete(handle);
+      const remaining = (streamsByKey.get(streamKey) ?? 1) - 1;
+      if (remaining <= 0) streamsByKey.delete(streamKey);
+      else streamsByKey.set(streamKey, remaining);
+    };
+    request.on('close', forget);
+    response.on('close', forget);
+  }
+
+  /** Resolves the scope for a request, answering the error itself when it cannot. */
   function scopeOf(query: Record<string, unknown>, response: Response): XrayViewerScope | null {
     const resolution = resolveScope(viewerOf(response), query, readModel);
     if (!resolution.ok) {
@@ -333,6 +440,17 @@ export function buildXrayRouter(runtime: XrayRoutesRuntime): Router {
         response.status(200).json(payload);
         return;
       }
+      if (viewer.viewer_kind === 'public') {
+        const payload: ViewerMeResponse = {
+          viewer_kind: 'public',
+          login_id: PUBLIC_LOGIN_ID,
+          grant_ids: readModel.grantIdsForLogin(PUBLIC_LOGIN_ID),
+          persona: null,
+          expires_at: viewer.expires_at,
+        };
+        response.status(200).json(payload);
+        return;
+      }
       const loginId = viewer.login_id ?? '';
       const payload: ViewerMeResponse = {
         viewer_kind: 'pairing',
@@ -403,7 +521,7 @@ export function buildXrayRouter(runtime: XrayRoutesRuntime): Router {
         response,
         403,
         'forbidden',
-        'Observer mode is read-only. Only the viewer who owns a login may erase its history.',
+        'Observer mode and the public lane are read-only. Only the viewer who owns a login may erase its history.',
       );
       return;
     }
@@ -569,30 +687,8 @@ export function buildXrayRouter(runtime: XrayRoutesRuntime): Router {
     request.socket.setTimeout(0);
     request.socket.setNoDelay(true);
     request.socket.setKeepAlive(true);
-    // Nothing else bounds these: each open stream owns a queue, and Cloud Run allows 250
-    // concurrent requests against 1 GiB. A viewer that stops reading must cost a bounded amount.
-    const streamKey = keyForStreamQuota(scope);
-    const perLogin = streamsByKey.get(streamKey) ?? 0;
-    if (runtime.streams.size >= runtime.config.xrayMaxStreams) {
-      response.setHeader('Retry-After', '5');
-      sendError(
-        response,
-        429,
-        'too_many_streams',
-        'This server is already serving as many live streams as it can. Retry in a few seconds.',
-      );
-      return;
-    }
-    if (perLogin >= runtime.config.xrayMaxStreamsPerLogin) {
-      response.setHeader('Retry-After', '5');
-      sendError(
-        response,
-        429,
-        'too_many_streams',
-        'This login already has the maximum number of live dashboard streams open. Close one tab and retry.',
-      );
-      return;
-    }
+    const streamKey = streamQuotaKeyOrRefuse(scope, response);
+    if (streamKey === null) return;
 
     const stream = openSseStream({
       request,
@@ -606,19 +702,107 @@ export function buildXrayRouter(runtime: XrayRoutesRuntime): Router {
       ...(runtime.heartbeatMs === undefined ? {} : { heartbeatMs: runtime.heartbeatMs }),
       onError: runtime.onError,
     });
-    runtime.streams.add(stream);
-    streamsByKey.set(streamKey, perLogin + 1);
-    let forgotten = false;
-    const forget = (): void => {
-      if (forgotten) return; // `close` fires on both the request and the response.
-      forgotten = true;
-      runtime.streams.delete(stream);
-      const remaining = (streamsByKey.get(streamKey) ?? 1) - 1;
-      if (remaining <= 0) streamsByKey.delete(streamKey);
-      else streamsByKey.set(streamKey, remaining);
-    };
-    request.on('close', forget);
-    response.on('close', forget);
+    holdStreamSlot(streamKey, stream, request, response);
+  });
+
+  // -------------------------------------------------------------------------
+  // The export (v0.8, D-27)
+  // -------------------------------------------------------------------------
+
+  /**
+   * The export's reader: `?lane=public` first, as everywhere; then the admin token as a bearer,
+   * checked like `POST /xray/api/admin` (constant time, failures rate-limited per IP prefix);
+   * otherwise the viewer cookie.
+   */
+  const requireExportViewer: RequestHandler = (request, response, next) => {
+    const token = wantsPublicLane(request.query as Record<string, unknown>) ? null : bearerOf(request);
+    if (token === null) {
+      requireViewer(request, response, next);
+      return;
+    }
+    void (async () => {
+      const key = ipPrefixOfRequest(request) ?? 'unknown';
+      if (pairing.limiter.isLimited(key)) {
+        sendError(response, 429, 'rate_limited', PAIRING_FAILURE_MESSAGE.rate_limited as string);
+        return;
+      }
+      const result = await pairing.exchangeAdminToken(token);
+      if (!result.ok) {
+        pairing.limiter.recordFailure(key);
+        sendError(response, 403, 'forbidden', 'That admin token is not valid.');
+        return;
+      }
+      const viewer: ViewerIdentity = {
+        viewer_kind: 'admin',
+        login_id: null,
+        expires_at: runtime.now().toISOString(),
+      };
+      response.locals.viewer = viewer;
+      next();
+    })().catch((error: unknown) => {
+      runtime.onError(error, 'requireExportViewer');
+      sendError(response, 500, 'internal_error', 'The admin token could not be checked.');
+    });
+  };
+
+  /**
+   * `GET /xray/api/export` (v0.8, D-27): every event the scope may read, as JSONL, oldest first.
+   * The upper bound is the newest id when the request arrives, so a busy server cannot keep an
+   * export open forever. Pages of `EXPORT_PAGE_ROWS` come from the SQLite log - from the ring when
+   * the log is degraded - and the loop yields between pages and waits for `drain`, so a
+   * 200,000-row export never holds the event loop or buffers the whole log in memory. Verbatim on
+   * purpose: the export is the operator's copy, and the observer view stays the redacted one.
+   */
+  router.get(mounted(XRAY_ROUTES.export), requireExportViewer, (request, response) => {
+    const query = request.query as Record<string, unknown>;
+    const scope = scopeOf(query, response);
+    if (!scope) return;
+    const streamKey = streamQuotaKeyOrRefuse(scope, response);
+    if (streamKey === null) return;
+    const handle: SseStream = { close: () => response.destroy() };
+    holdStreamSlot(streamKey, handle, request, response);
+
+    void (async () => {
+      pipeline.flush();
+      const after = positiveInteger(query.after, 0, Number.MAX_SAFE_INTEGER);
+      const until = log.degraded ? (ring.last(1)[0]?.id ?? 0) : log.maxId();
+      const filter = logFilterFor(scope, readModel);
+      const page = (cursor: number): XrayEvent[] =>
+        log.degraded
+          ? ring.after(cursor, EXPORT_PAGE_ROWS)
+          : log.readAfter(cursor, EXPORT_PAGE_ROWS, filter);
+
+      response.status(200);
+      response.setHeader('Content-Type', XRAY_EXPORT_CONTENT_TYPE);
+      response.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${exportFileName(runtime.now())}"`,
+      );
+      response.setHeader('Cache-Control', 'no-store');
+      response.flushHeaders();
+
+      let cursor = after;
+      let done = cursor >= until;
+      while (!done && !response.destroyed) {
+        const rows = page(cursor);
+        let chunk = '';
+        for (const event of rows) {
+          if (event.id > until) break;
+          cursor = event.id;
+          if (readModel.matchesScope(event, scope)) chunk += `${JSON.stringify(event)}\n`;
+        }
+        // Past the bound, a short page or the bound itself: nothing older is left to read.
+        done = rows.length < EXPORT_PAGE_ROWS || cursor >= until || (rows.at(-1)?.id ?? 0) > until;
+        if (chunk !== '' && !response.write(chunk)) await drained(response);
+        if (!done) await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      response.end();
+    })().catch((error: unknown) => {
+      runtime.onError(error, 'export');
+      // The status line is long gone: cutting the body is the only honest signal left.
+      if (response.headersSent) response.destroy();
+      else sendError(response, 500, 'internal_error', 'The event log could not be exported.');
+    });
   });
 
   // Anything else under /xray/api is a 404 in the contract's error shape. The SPA, its assets and

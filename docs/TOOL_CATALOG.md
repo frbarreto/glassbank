@@ -1,6 +1,6 @@
 # Tool catalog
 
-Source of truth: `src/contracts/tools.ts` (`TOOL_CATALOG`, 17 entries in `tools/list` order) and `src/contracts/scopes.ts`. Contracts are v0.5 and append-only. Ramp lineage per tool: `docs/RAMP_REFERENCE.md`. Tests: `npx vitest run test/contracts src/tools`.
+Source of truth: `src/contracts/tools.ts` (`TOOL_CATALOG`, 17 entries in `tools/list` order), `src/contracts/scopes.ts`, and for the sign-in-free endpoint `src/contracts/public.ts` (`PUBLIC_TOOL_CATALOG`, 6 entries, section 8). Contracts are v0.7 and append-only. Ramp lineage per tool: `docs/RAMP_REFERENCE.md`. Tests: `npx vitest run test/contracts src/tools`.
 
 ## 1. Conventions that apply to every tool
 
@@ -118,3 +118,24 @@ Knobs (`TOOL_LIMIT_DEFAULTS`; env names in `.env.example`): `MAX_TABLES_PER_GRAN
 6. Success: `bank.op {transfer.confirm, audit_id}`, preview forgotten, text `Transfer {id} is {status}.` with amount, fee, total and the audit id; `structuredContent.confirmed = true`.
 
 `lock_or_unlock_card` is single-step. Previews are keyed by login, not grant, so a step-up or a reconnect can still confirm (ADR-14).
+
+## 8. The public lane (`src/contracts/public.ts`, D-26, ADR-19)
+
+A second endpoint, `POST /public/mcp`, needs no sign-in and never challenges. It lists six tools, all read-only, with no scope and no flag, and they obey every rule of section 1 (`test/contracts/tool-catalog.test.ts` runs the same checks over them). Each description ends with `PUBLIC_LANE_NOTICE`: "This is the public endpoint, which needs no sign-in: every call to it, rationale included, is shown on a public dashboard, so never put personal details in the arguments or the rationale." The data is `bankCore.publicInfo` (`src/bank-core/public-catalog.ts`); the handlers are `src/tools/public.ts`.
+
+| Level | Tool | Arguments besides `rationale` | Answers |
+|---|---|---|---|
+| 0 | `get_bank_profile` | - | Purpose, differentiators, what is public and what needs a sign-in, `endpoints` (`public_mcp`, `signed_in_mcp`, `public_dashboard`) |
+| 1 | `list_products` | `family` (`accounts` / `cards` / `business` / `""`) | Families with their products: `product_id`, summary, `lowest_monthly_fee` in cents, `plan_count` |
+| 2 | `get_product` | `product_id` (required) | The product with its plans (`plan_id`, `monthly_fee`, headline, highlights), eligibility, what needs a sign-in |
+| 3 | `search_prices` | `product_id`, `plan_id`, `kind` (six kinds or `""`), `query` (every word must match), `max_amount` (cents; drops rates) | `count` and every matching price line: amount in cents or rate in basis points, `display`, `applies`, `waiver` |
+| 1 | `find_branches` | `city` (case-insensitive), `service` (seven services or `""`) | `cities` served and the matching locations: `branch_id`, kind, services |
+| 2 | `get_branch` | `branch_id` (required) | Address, time zone, seven days of hours, services, ATM count, accessibility, languages |
+
+- Every answer is compact JSON with `next`: the call one level deeper, or, when the question turns to a customer's own data, "the user adds the connector `<base>/mcp` and logs in there", with the host the visitor used. That sentence is the whole hand-off from the public lane to the signed-in one: the lane never answers 401, because a client that connected without a challenge does not reliably turn a later one into a login (A-47).
+- An unknown `product_id` or `branch_id` is a tool error listing what exists; a search with no match is a success whose `next` names the filter to drop.
+- A signed-in tool name called here is an unknown tool (`-32601`).
+- Rate limits, `tools/call` only: `RATE_LIMIT_PUBLIC_IP_TOOL_CALLS` (60 per IP prefix per minute) and `RATE_LIMIT_PUBLIC_TOOL_CALLS` (600 per minute for the whole lane) -> 429, `Retry-After: 60`, `tool.call.denied {rate_limited}`. `initialize` and `tools/list` are never limited.
+- `PUBLIC_SERVER_INSTRUCTIONS` (`serverInfo` = `{name: "glass-bank-public", title: "Glass Bank (public)", version: "0.1.0"}`):
+
+> Glass Bank is a fictional bank. This is its public endpoint: no sign-in, and only what the bank publishes - its profile, its products with every plan and price, and its branches. Go from general to specific: list_products, then get_product, then search_prices; find_branches, then get_branch. Amounts are integers in minor units (1000 = $10.00). A customer's own accounts, cards, transactions and transfers are not here: they need the signed-in connector at /mcp on the same host, which the user adds and logs in to. Always fill `rationale` with what the user asked for and why this call serves it. Every call to this endpoint, rationale included, is shown on a public dashboard, so never put personal details in the arguments or the rationale.

@@ -124,6 +124,7 @@ const schema = z.object({
     z.enum(['log-only', 'allowlist']),
   ),
   FEATURE_FLAGS: listVar('writes;transfers'),
+  PUBLIC_MCP: boolVar(true),
 
   // Secrets
   OAUTH_SIGNING_KEY: strVar(DEV_SIGNING_KEY).pipe(z.string().min(32)),
@@ -136,6 +137,7 @@ const schema = z.object({
   XS_IDLE_GAP_MINUTES: intVar(15, 1, 1440),
   XRAY_MAX_STREAMS_PER_LOGIN: intVar(4, 1, 10_000),
   XRAY_MAX_STREAMS: intVar(64, 1, 100_000),
+  XRAY_MAX_PUBLIC_STREAMS: intVar(16, 1, 100_000),
 
   // Auth storage
   AUTH_DB_PATH: strVar('/tmp/auth.sqlite'),
@@ -166,6 +168,8 @@ const schema = z.object({
   RATE_LIMIT_CLIENT_TOKEN: intVar(120, 1, 1_000_000),
   RATE_LIMIT_GRANT_TOOL_CALLS: intVar(120, 1, 1_000_000),
   RATE_LIMIT_LOGIN_GRANTS: intVar(20, 1, 1_000_000),
+  RATE_LIMIT_PUBLIC_IP_TOOL_CALLS: intVar(60, 1, 1_000_000),
+  RATE_LIMIT_PUBLIC_TOOL_CALLS: intVar(600, 1, 1_000_000),
 
   // Optional (Phase 3)
   SNAPSHOT_BUCKET: optionalStrVar(),
@@ -229,6 +233,7 @@ export function loadConfig(env: RawEnv = process.env): AppConfig {
     publicHosts: hosts,
     originPolicy: parsed.ORIGIN_POLICY,
     featureFlags: parsed.FEATURE_FLAGS,
+    publicMcp: parsed.PUBLIC_MCP,
 
     oauthSigningKey: parsed.OAUTH_SIGNING_KEY,
     xrayAdminToken: parsed.XRAY_ADMIN_TOKEN,
@@ -240,6 +245,7 @@ export function loadConfig(env: RawEnv = process.env): AppConfig {
     xsIdleGapMinutes: parsed.XS_IDLE_GAP_MINUTES,
     xrayMaxStreamsPerLogin: parsed.XRAY_MAX_STREAMS_PER_LOGIN,
     xrayMaxStreams: parsed.XRAY_MAX_STREAMS,
+    xrayMaxPublicStreams: parsed.XRAY_MAX_PUBLIC_STREAMS,
 
     authDbPath: parsed.AUTH_DB_PATH,
     maxDcrClients: parsed.MAX_DCR_CLIENTS,
@@ -267,6 +273,8 @@ export function loadConfig(env: RawEnv = process.env): AppConfig {
       clientTokenPer15Min: parsed.RATE_LIMIT_CLIENT_TOKEN,
       grantToolCallsPerMin: parsed.RATE_LIMIT_GRANT_TOOL_CALLS,
       loginGrantsPerDay: parsed.RATE_LIMIT_LOGIN_GRANTS,
+      publicIpToolCallsPerMin: parsed.RATE_LIMIT_PUBLIC_IP_TOOL_CALLS,
+      publicToolCallsPerMin: parsed.RATE_LIMIT_PUBLIC_TOOL_CALLS,
     },
 
     snapshotBucket: parsed.SNAPSHOT_BUCKET,

@@ -32,10 +32,12 @@ import type { AppConfig } from './config/index.js';
 import {
   CLAUDE_CONTENT_CHAR_CAP,
   CLAUDE_TOOL_BUDGET_MS,
+  PUBLIC_LOGIN_ID,
   type BankScope,
   type Pairing,
   type PairingCode,
   type PairingExchangeResult,
+  type PublicToolRegistry,
   type ToolContext,
   type ToolLimits,
   type ToolRegistry,
@@ -49,7 +51,13 @@ import {
 } from './contracts/index.js';
 import { createEtl, type Etl } from './etl/index.js';
 import { createMcp, type McpHandler } from './mcp/index.js';
-import { createTools, overlayLoginKeyOf, type ToolsHandle } from './tools/index.js';
+import {
+  createPublicTools,
+  createTools,
+  overlayLoginKeyOf,
+  type PublicToolsHandle,
+  type ToolsHandle,
+} from './tools/index.js';
 import { createXray, type Xray } from './xray/index.js';
 
 /** The SDK version reported on `server.started`; kept in step with package.json by a test. */
@@ -82,6 +90,8 @@ export interface GlassBank {
   readonly xray: Xray;
   readonly etl: Etl;
   readonly tools: ToolsHandle;
+  /** The six public tools of `/public/mcp` (D-26), built even when the lane is switched off. */
+  readonly publicTools: PublicToolsHandle;
   readonly mcp: McpHandler;
   /**
    * The SIGTERM path, in the order the events have to happen (docs/blocks/mcp.md, xray.md):
@@ -320,6 +330,24 @@ export function createGlassBank(config: AppConfig, options: GlassBankOptions = {
       ),
   };
 
+  // 5b. the public lane's tools (D-26). Same ambient correlation, so the `bank.op` a public read
+  //     emits from inside bank-core lands in the visitor's session under `PUBLIC_LOGIN_ID`.
+  const publicTools = createPublicTools();
+  const correlatedPublicRegistry: PublicToolRegistry = {
+    catalog: publicTools.catalog,
+    list: () => publicTools.list(),
+    call: (name, args, context) =>
+      ambientCorrelation.run(
+        {
+          xs: context.xs ?? undefined,
+          login_id: PUBLIC_LOGIN_ID,
+          grant_id: context.grantId,
+          request_id: context.requestId ?? undefined,
+        },
+        () => publicTools.call(name, args, context),
+      ),
+  };
+
   /** The caps every handler must respect, from the env knobs plus claude.ai's two budgets. */
   const toolLimits: ToolLimits = {
     maxTablesPerGrant: config.maxTablesPerGrant,
@@ -361,6 +389,16 @@ export function createGlassBank(config: AppConfig, options: GlassBankOptions = {
       pairing: xray === null ? lazyPairing : xray.pairing,
       limits: toolLimits,
     }),
+    ...(config.publicMcp
+      ? {
+          publicLane: {
+            registry: correlatedPublicRegistry,
+            info: bankCore.publicInfo,
+            ipToolCallsPerMin: config.rateLimits.publicIpToolCallsPerMin,
+            toolCallsPerMin: config.rateLimits.publicToolCallsPerMin,
+          },
+        }
+      : {}),
     ...(quiet ? { log: () => undefined } : {}),
   });
 
@@ -371,6 +409,7 @@ export function createGlassBank(config: AppConfig, options: GlassBankOptions = {
     version,
     authRouter: auth.router,
     mcpRouter: mcp,
+    ...(mcp.publicLane === null ? {} : { publicMcpRouter: mcp.publicLane }),
     xrayRouter: xray.router,
     dashboardRoot: options.dashboardRoot ?? dashboardRootFor(import.meta.url),
   });
@@ -387,6 +426,7 @@ export function createGlassBank(config: AppConfig, options: GlassBankOptions = {
     xray: liveXray,
     etl,
     tools,
+    publicTools,
     mcp,
     async shutdown(reason = 'shutdown'): Promise<void> {
       if (stopped) return;

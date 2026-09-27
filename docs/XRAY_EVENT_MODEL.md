@@ -1,6 +1,6 @@
 # X-ray event model
 
-The contract between the server (producer) and the dashboard (consumer): `src/contracts/events.ts` (zod; 46 event types in 12 families; `XRAY_CONTRACT_VERSION` = 1) and `src/contracts/xray-api.ts` (routes, SSE constants, response types). Contracts are v0.5 and append-only: types and fields are added, never renamed or removed. The dashboard parses with `XrayEnvelopeSchema` (any `type`, any `data`), so an unknown type still gets a timeline row and its whole envelope as a JSON tree in the inspector. Tests: `npx vitest run test/contracts src/xray public`.
+The contract between the server (producer) and the dashboard (consumer): `src/contracts/events.ts` (zod; 46 event types in 12 families; `XRAY_CONTRACT_VERSION` = 1) and `src/contracts/xray-api.ts` (routes, SSE constants, response types). Contracts are v0.7 and append-only: types and fields are added, never renamed or removed. The dashboard parses with `XrayEnvelopeSchema` (any `type`, any `data`), so an unknown type still gets a timeline row and its whole envelope as a JSON tree in the inspector. Tests: `npx vitest run test/contracts src/xray public/__tests__`.
 
 ## 1. What the server can and cannot see
 
@@ -106,6 +106,7 @@ Redaction (`src/xray/redaction.ts`, every event on the way in; unit-tested): sen
 - Logins and grants: `login_id` comes from the 30-day `login_id` cookie. A step-up extends the same grant (`auth.grant.updated {step_up}`); any other re-consent mints a new grant with `parent_grant_id` (`auth.grant.created`). The dashboard groups by login, then grant, so one human's history is never split.
 - Pairing (`src/xray/pairing.ts`): `xray_get_session_link` mints `BANK-XXXX-XXXX-XX` (32-letter alphabet without `0 O 1 I`, 50 bits), bound to the login, valid `PAIRING_CODE_TTL_HOURS` (24), multi-use, URL `<PUBLIC_BASE_URL>/xray/s/<code>`. Only the hash is kept, in an in-memory LRU of 10,000 that a restart empties. The exchange sets cookie `xray_viewer`: a JWT `typ: viewer` with `{login_id, viewer_kind}`, 24 h, `HttpOnly Secure SameSite=Lax Path=/`, which survives a restart. Failed exchanges are limited to `RATE_LIMIT_IP_PAIR_FAILURES` (5) per IP prefix per minute (`xray.pairing.rejected {rate_limited}`).
 - Observer mode (D-5): `POST /xray/api/admin {token}` against `XRAY_ADMIN_TOKEN` sets the same cookie with `viewer_kind: admin` and no login; shares the failure limiter; 403 on a bad token. No public session picker exists (invariant 11).
+- The public lane (D-26, `src/mcp/public-lane.ts`): a caller of `/public/mcp` has no grant, so it gets a pseudo one, `grt_pub_` + 12 hex of sha256 over its IP prefix and User-Agent, which keys its `xs` exactly like a real grant. Every event of the lane - `http.request`, `session.*`, `catalog.tools_listed`, `tool.call.*`, `intent.declared` / `intent.missing`, `bank.op {public.*}` - carries `login_id: "lgn_public"` (`PUBLIC_LOGIN_ID`) and no `persona_id`. No `auth.*` event: nothing is granted. The hash groups one agent's calls and gates nothing (A-29); two agents behind one egress and one User-Agent are one visitor (A-48).
 
 ## 5. SSE transport (`src/xray/sse.ts`; constants in `xray-api.ts`)
 
@@ -114,7 +115,8 @@ Redaction (`src/xray/redaction.ts`, every event on the way in; unit-tested): sen
 - Open order: subscribe, flush the emitter, replay, go live and drain - no gap and no duplicate across the 60-minute Cloud Run cut (invariant 3).
 - Replay: `Last-Event-ID` header (or `?last_event_id=`) -> every event with a greater `id` that the scope may see, in chunks of 500, at most `MAX_REPLAY_EVENTS` (20,000); with no cursor, the last `INITIAL_REPLAY` (200). Source: the SQLite log, or the in-memory ring (`RING_BUFFER_SIZE` 10,000 events, 48 MB budget) when the log is degraded.
 - Backpressure: per-subscriber queue of `MAX_SUBSCRIBER_QUEUE` (1000 frames) / 4 MB; overflow drops frames, then one id-less `xray.dropped {dropped_count}` frame tells the browser, whose cursor stays on the last real event so the automatic reconnect backfills.
-- Caps: `XRAY_MAX_STREAMS` (64 per process) and `XRAY_MAX_STREAMS_PER_LOGIN` (4; all admins share one bucket) -> 429 `too_many_streams`, `Retry-After: 5`.
+- `?lane=public` (v0.7) streams the public lane with no cookie: the `public` reader sees `lgn_public` only, verbatim.
+- Caps: `XRAY_MAX_STREAMS` (64 per process), `XRAY_MAX_STREAMS_PER_LOGIN` (4; all admins share one bucket) and `XRAY_MAX_PUBLIC_STREAMS` (16, every public reader together) -> 429 `too_many_streams`, `Retry-After: 5`.
 - Lifecycle: `xray.viewer.connected {filter, last_event_id, replayed}` on open; `xray.viewer.disconnected {reason}` on close; `shutdown` closes every stream with `server_cut`. Admin streams pass through `applyObserverRedaction`.
 - Storage: append-only `events` table at `XRAY_DB_PATH` (WAL, incremental auto-vacuum). A retention job every 10 min deletes rows older than `XRAY_RETENTION_HOURS` (72), trims to `XRAY_MAX_LOG_ROWS` (200,000) and reclaims pages. The read model is rebuilt from the last 5000 events on boot.
 
@@ -135,10 +137,13 @@ Redaction (`src/xray/redaction.ts`, every event on the way in; unit-tested): sen
 | `GET /xray/api/sessions/:xs/bank` | viewer cookie; same ownership rule as the session detail | `XraySessionBankResponse {xs, login_id, persona, currency, as_of, accounts[], total_cash_cents, total_available_cents, total_credit_owed_cents, net_position_cents, cards {total, active, locked, fraud_locked}, transfer_limit_cents}` on the login's overlay; 404 `not_found` / `no_persona`, 503 `unavailable` when no bank is wired (v0.3). |
 | `GET /xray/api/catalog?xs=` | viewer cookie | `XrayCatalogSnapshot {xs, content_hash, captured_at, event_id, tools, availability, feature_flags}`; 400 without `xs`, 404 before a listing. |
 | `GET /xray/api/stream` | viewer cookie | SSE, section 5. |
+| `GET /xray/api/export[?xs= / login=me / all=1][&after=]` | viewer cookie, or `Authorization: Bearer <XRAY_ADMIN_TOKEN>` (failure limiter) | JSONL, one stored envelope per line, oldest first (`XRAY_EXPORT_CONTENT_TYPE`, the line format of `test/fixtures/events.jsonl`), as an attachment named `glass-bank-xray-<UTC stamp>.jsonl`. Every event the scope may read with `id > after`, up to the newest id when the request arrived; verbatim for every reader, admin included. Holds a stream slot while it runs (429 + `Retry-After: 5`); wrong bearer 403 (v0.8, D-27). |
 | other `/xray/api/*` | - | 404 `not_found`. |
 | `GET /health` (alias `/healthz`, unreachable through Cloud Run's front end) | none | `HealthzResponse {status: "ok", boot_id, version, origin_policy, uptime_s}` (app block). |
 
-Errors are `{error, message}` (`XrayErrorResponse`); no cookie -> 401 `unauthorized`. Admin responses go through `applyObserverRedaction`. `XraySessionSummary`: `xs, login_id, grant_id, parent_grant_id, persona {id, name, kind, shared}, client, protocol_version, era, started_at, last_seen_at, initialize_count, call_count, error_count, token_expires_at, boot_id`. `XrayGrantFacts`: `grant_id, parent_grant_id, login_id, scopes, auth_level, client_id (hash), client_name, client_reconstructed, created_at, expires_at, revoked`. `XraySessionCounters`: `events, calls, errors, protocol_errors, tables_loaded, queries, bank_operations`.
+The public lane (v0.7, D-26): every `GET` above except the pairing and admin exchanges also answers `?lane=public` with no cookie, as the `public` reader of `PUBLIC_LOGIN_ID` (a cookie sent along is ignored). Another login's `xs` and `all=1` -> 403; both `DELETE` routes -> 403; `me` -> `{viewer_kind: "public", login_id: "lgn_public", grant_ids, persona: null}`; `sessions/:xs/bank` -> 404 `no_persona`.
+
+Errors are `{error, message}` (`XrayErrorResponse`); no cookie -> 401 `unauthorized`. Admin responses go through `applyObserverRedaction`, except the export, which is the operator's verbatim copy (D-27). `XraySessionSummary`: `xs, login_id, grant_id, parent_grant_id, persona {id, name, kind, shared}, client, protocol_version, era, started_at, last_seen_at, initialize_count, call_count, error_count, token_expires_at, boot_id`. `XrayGrantFacts`: `grant_id, parent_grant_id, login_id, scopes, auth_level, client_id (hash), client_name, client_reconstructed, created_at, expires_at, revoked`. `XraySessionCounters`: `events, calls, errors, protocol_errors, tables_loaded, queries, bank_operations`.
 
 ## 7. Dashboard panels (`public/`, flat ES modules, no framework or bundler)
 
@@ -146,8 +151,8 @@ Errors are `{error, message}` (`XrayErrorResponse`); no cookie -> 401 `unauthori
 
 | File | Panel | Fed by |
 |---|---|---|
-| `panel-connect.js` | Connect: pairing-code form, stream-drop banner, viewer identity chip. | `/xray/api/me`, `/xray/api/pair`, stream state |
-| `panel-sessions.js` | 1 Sessions: grouped by login then grant, `parent_grant_id` lineage, `boot_id` restart chip, token expiry. | `/xray/api/sessions`, `session.*`, `auth.grant.*`, `server.started` |
+| `panel-connect.js` | Connect: pairing-code form, "Watch the public lane" (`?lane=public`, D-26), stream-drop banner, viewer identity chip (`public lane` for the public reader). | `/xray/api/me`, `/xray/api/pair`, stream state |
+| `panel-sessions.js` | 1 Sessions: grouped by login then grant, `parent_grant_id` lineage, `boot_id` restart chip, token expiry; `lgn_public` headed "Public lane" and each visitor labelled as a hash, never as a consent. | `/xray/api/sessions`, `session.*`, `auth.grant.*`, `server.started` |
 | `panel-timeline.js` | 2 Live timeline, two modes (`view.timelineMode`): `chain` (default) groups the calls into episodes and threads and draws each call as one spine line that opens in place (below), with one-line context rows between episodes (40 episodes drawn); `events` draws one row per event (400 drawn), newest last, with a latency bar. Filters (`/`), pause and jump-to-live serve both; the depth control, `⇱ Collapse all` and the legend are chain mode only; unknown types still get a row. | every event |
 | `panel-inspector.js` | 3 Call inspector (a spine row's `⤢` button, or a row in events mode): arguments with redaction markers, rationale, `_meta`, timings, result and size, error class; `bank/etl/sql/intent/auth.stepup` events with the same `request_id` nested; raw envelope fallback. Every JSON blob here is a `json-view.js` tree, with Raw and Copy handing back exactly the bytes that arrived. | `tool.*` and correlated events |
 | `panel-possibility.js` | 4 Possibility space: the listing the rows came from, the availability row per tool with "listed but not usable" made explicit (ADR-13), and per tool the descriptor as it was sent, with this browser's digest check (below). | `catalog.tools_listed`, `catalog.availability` |
@@ -156,7 +161,7 @@ Errors are `{error, message}` (`XrayErrorResponse`); no cookie -> 401 `unauthori
 | `panel-sql-data.js` | 7 SQL and data: tables loaded and processed, every query with rows and duration, rejections, evictions, the live scratch schema. | `etl.*`, `sql.*` |
 | `panel-errors-health.js` | 8 Errors and health: protocol versus tool errors, p50/p95 per tool, stream reconnects and drops, initialize-loop signal. | `protocol.*`, `tool.*`, `xray.*`, `http.*` |
 | `panel-now-strip.js` | Now strip: the in-flight call's elapsed time against the 300 s budget, else the last completed call. | `tool.call.started` / `completed` |
-| `panel-persona.js` | Persona card at the top of the Sessions aside: who is in the session, the money with the login's overlay applied (ADR-15), cards, transfer limit, the grant that authorised the calls. | `GET /xray/api/sessions/:xs/bank`, `bank.op` |
+| `panel-persona.js` | Persona card at the top of the Sessions aside: who is in the session, the money with the login's overlay applied (ADR-15), cards, transfer limit, the grant that authorised the calls. A public-lane session gets an "Anonymous visitor" card instead, with no balance request. | `GET /xray/api/sessions/:xs/bank`, `bank.op` |
 
 ### The spine of panel 2 (`panel-call.js`, `hops.js`, `open-state.js`)
 
@@ -206,7 +211,7 @@ Who originated what the event records. The table is static except the two payloa
 
 `page` never appears here: no event is authored by the browser, so anything wearing that colour is the dashboard's own reading.
 
-`npx vitest run public` covers the store, filters, panels and the copied contract constants. `node public/_dev/check-console.mjs` renders the fixture in headless Chrome over its own static server (`_dev/serve.mjs`, an auto-assigned DevTools port; `CDP_PORT` pins one) and fails on any console error.
+`npx vitest run public/__tests__` covers the store, filters, panels and the copied contract constants. `node public/_dev/check-console.mjs` renders the fixture in headless Chrome over its own static server (`_dev/serve.mjs`, an auto-assigned DevTools port; `CDP_PORT` pins one) and fails on any console error.
 
 ## 8. Fixtures
 

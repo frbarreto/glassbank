@@ -2624,8 +2624,19 @@ button {
   flex-wrap: wrap;
 }
 
-.sessions-clear {
+.sessions-clear,
+.sessions-export {
   margin-left: auto;
+}
+
+.sessions-export + .sessions-clear {
+  margin-left: 0;
+}
+
+/* The export is a link (the browser saves the file) drawn as a quiet button. */
+a.btn {
+  display: inline-block;
+  text-decoration: none;
 }
 
 .sessions-clear-buttons,
@@ -3894,6 +3905,11 @@ button {
   color: var(--text-3);
   line-height: 1.5;
   max-width: 38rem;
+}
+
+/* The public lane's own entry (D-26) starts a second block under the pairing one. */
+.connect-note + .connect-sub {
+  margin-top: 28px;
 }
 
 .connect-admin {

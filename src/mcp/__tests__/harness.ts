@@ -22,7 +22,10 @@ import { expect } from 'vitest';
 
 import {
   ACCESS_TOKEN_PREFIX,
+  PUBLIC_MCP_PATH,
+  PUBLIC_TOOL_CATALOG,
   TOOL_CATALOG,
+  catalogAvailability,
   XRAY_CONTRACT_VERSION,
   formatScopeString,
   safeParseXrayEvent,
@@ -32,6 +35,9 @@ import {
   type OAuthClient,
   type Pairing,
   type Persona,
+  type PublicBankInfo,
+  type PublicToolContext,
+  type PublicToolRegistry,
   type Scope,
   type ScratchDb,
   type ToolContext,
@@ -210,6 +216,29 @@ export function createFakeRegistry(): FakeRegistry {
   };
 }
 
+/** A fake `PublicToolRegistry` (the contract interface, not `src/tools`), D-26. */
+export interface FakePublicRegistry extends PublicToolRegistry {
+  readonly calls: { name: string; args: Record<string, unknown>; context: PublicToolContext }[];
+}
+
+export function createFakePublicRegistry(): FakePublicRegistry {
+  const calls: FakePublicRegistry['calls'] = [];
+  return {
+    calls,
+    catalog: PUBLIC_TOOL_CATALOG,
+    list: () => ({
+      content_hash: '0123456789abcdef',
+      listed: PUBLIC_TOOL_CATALOG,
+      availability: catalogAvailability(PUBLIC_TOOL_CATALOG, { scopes: [] }, []),
+      feature_flags: [],
+    }),
+    async call(name, args, context) {
+      calls.push({ name, args, context });
+      return toolText(`fake public registry answered ${name}`);
+    },
+  };
+}
+
 /**
  * The half of `ToolContext` `src/app.ts` fills in. `BankCore`, `ScratchDb` and `Pairing` belong
  * to blocks `src/mcp` may not import, and nothing in this block reads them - it only carries
@@ -253,7 +282,10 @@ export interface McpHarness {
   readonly logs: McpLogRecord[];
   readonly xray: RecordingEmitter;
   readonly registry: FakeRegistry | null;
+  readonly publicRegistry: FakePublicRegistry | null;
   readonly handler: McpHandler;
+  /** A JSON-RPC POST to the public lane, never with a bearer unless a header says so. */
+  publicRpc(body: unknown, headers?: Record<string, string>): Promise<Response>;
   /** A JSON-RPC POST with the Accept header the Streamable HTTP transport demands. */
   rpc(
     body: unknown,
@@ -273,6 +305,8 @@ export interface McpHarnessOptions {
   readonly registry?: FakeRegistry;
   /** An injectable clock, so idle-gap segmentation can be simulated without waiting. */
   readonly now?: () => Date;
+  /** Mounts the public lane at `PUBLIC_MCP_PATH` with a fake registry (D-26). */
+  readonly publicLane?: { readonly ipToolCallsPerMin?: number; readonly toolCallsPerMin?: number };
 }
 
 export async function startMcpHarness(options: McpHarnessOptions = {}): Promise<McpHarness> {
@@ -324,6 +358,7 @@ export async function startMcpHarness(options: McpHarnessOptions = {}): Promise<
   const logs: McpLogRecord[] = [];
   const xray = createRecordingEmitter(now);
   const registry = options.registry ?? null;
+  const publicRegistry = options.publicLane === undefined ? null : createFakePublicRegistry();
   const handler = createMcp({
     config,
     verifyAccessToken,
@@ -336,6 +371,16 @@ export async function startMcpHarness(options: McpHarnessOptions = {}): Promise<
     now,
     // The tests drive `sweep()` by hand; a timer would make them depend on wall-clock time.
     sweepIntervalMs: 0,
+    ...(publicRegistry === null
+      ? {}
+      : {
+          publicLane: {
+            registry: publicRegistry,
+            info: unwired<PublicBankInfo>('bank-core'),
+            ipToolCallsPerMin: options.publicLane?.ipToolCallsPerMin ?? 60,
+            toolCallsPerMin: options.publicLane?.toolCallsPerMin ?? 600,
+          },
+        }),
   });
 
   const app = express();
@@ -347,6 +392,7 @@ export async function startMcpHarness(options: McpHarnessOptions = {}): Promise<
     response.setHeader('x-request-id', HTTP_REQUEST_ID_SENTINEL);
     next();
   });
+  if (handler.publicLane !== null) app.use(PUBLIC_MCP_PATH, handler.publicLane);
   app.use('/mcp', handler);
   server.on('request', app);
 
@@ -355,7 +401,20 @@ export async function startMcpHarness(options: McpHarnessOptions = {}): Promise<
     logs,
     xray,
     registry,
+    publicRegistry,
     handler,
+    async publicRpc(body, headers = {}) {
+      return await fetch(new URL(PUBLIC_MCP_PATH, baseUrl), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          ...headers,
+        },
+        body: JSON.stringify(body),
+        redirect: 'manual',
+      });
+    },
     async fetch(path: string, init: RequestInit = {}) {
       return await fetch(new URL(path, baseUrl), { ...init, redirect: 'manual' });
     },

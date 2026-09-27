@@ -59,5 +59,5 @@ npm run build && node dist/server.js           # the entry point the container r
 ## Known gaps
 - `LOG_LEVEL` and `SNAPSHOT_BUCKET` are parsed and consumed by nothing (logging is bare `console`); `GIT_SHA` is read but nothing sets it (`infra/deploy.sh` does not pass it), so `server.started.git_sha` is `null`.
 - No rate limit on the `/xray` read routes; only the pairing and admin exchanges have one.
-- `trust proxy` = 1 is unverified against a real Cloud Run chain; behind no proxy a caller names its own `req.ip`. On Cloud Run, claude.ai's requests arrive as `0.0.0.0` (A-43); `raw.headers` now records the whole `X-Forwarded-For` chain and `raw.remote_address` the socket peer, so the chain can be read from an export.
+- `trust proxy` = 1 matches Cloud Run (its front end appends exactly one `X-Forwarded-For` entry; measured 2026-09-27 from the raw record), but behind no proxy a caller names its own `req.ip`. On Cloud Run, claude.ai's requests arrive as `0.0.0.0` (A-43).
 - `src/mcp/bootstrap-tools.ts` is unreachable in every wired path but still in the tree.

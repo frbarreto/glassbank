@@ -35,6 +35,16 @@ Measured from the developer's Mac against revision `mcp-bank-00004-9vw`, `ORIGIN
 - `gcloud run services describe --format=yaml` carries a default `startupProbe` with `timeoutSeconds: 240` above the service's own `timeoutSeconds: 3600`; smoke check 6 reads the service field.
 - Domain mapping `glassbank-mcp.abovethefog.app`: record created 19:23 UTC, `CertificateProvisioned` 19:34 UTC (11 minutes, well inside the hourly re-check the status message announces); at 19:41 UTC Google's edges still answered TLS for the name inconsistently from Brazil (one request in four), while the GitHub runner's smoke passed all 36 checks at 19:42 UTC. Plain `http://` on the name already answered 302 to `https://` before the certificate was served.
 
+## What Cloud Run's front end does to a request (2026-09-27, v0.9 raw record)
+
+Measured on the live service after the v0.9 deploy (boot `boot_1187ccf6-...`), with a signed probe from the developer's Mac (`exports/*v0.9-verification*.jsonl`):
+
+- `X-Forwarded-For` and `Forwarded` get exactly one entry appended, the real client (a caller's own values stay in front): `203.0.113.77,<client IPv6>`. `trust proxy = 1` therefore resolves the real client, and `remote_ip_prefix` was right (A-43, hop count confirmed).
+- The front end adds `x-cloud-trace-context` and `x-forwarded-proto: https`, keeps a caller's `traceparent` trace id but replaces its span id, and rewrites `accept-encoding` (`br, gzip, deflate`).
+- Header names reach the process lower-cased (the probe sent `Signature-Agent`, the process saw `signature-agent`): the case is lost at the front end, before `raw` records it.
+- The socket peer is `169.254.169.x`, Cloud Run's link-local proxy, never the client.
+- `Signature`, `Signature-Input` and `Signature-Agent` pass through untouched: all 11 signed probe requests arrived with their three headers, byte for byte.
+
 ## The first real clients on Cloud Run (2026-09-27, `exports/*20260927*`)
 
 Facts from the X-ray exports and Cloud Run's request log, recorded before v0.9, so without headers:
@@ -54,7 +64,7 @@ Facts from the X-ray exports and Cloud Run's request log, recorded before v0.9, 
 - Any Web Bot Auth signature (`Signature-Agent`) from any client.
 - Any `Origin` header from a browser-based client. Every recorded client sent none, so `log-only` and `allowlist` have been indistinguishable.
 - A-40 (does Claude act on the 403 step-up), A-41 (does the step-up popup carry the `login_id` cookie), A-05 / A-06 (`rationale` quality from Claude), A-17 (Origin values), and the `tools/list` cadence ("every 25 to 80 s" is Anthropic's documentation, not a measurement here).
-- Cloud Run: a cold start (never happens with one always-on instance) and the proxy hop count behind `app.set('trust proxy', 1)`: since v0.9 the whole `X-Forwarded-For` chain and the socket peer are in `raw`, so one admin export of a real request answers it.
+- Cloud Run: a cold start (never happens with one always-on instance).
 
 ## Decisions taken from these observations
 

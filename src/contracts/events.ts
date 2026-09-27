@@ -166,7 +166,10 @@ export const ServerStoppingData = z.looseObject({
 export const OriginDecisionSchema = z.enum(['allowed', 'absent', 'rejected', 'logged']);
 export type OriginDecision = z.infer<typeof OriginDecisionSchema>;
 
-/** One header line as it arrived: the name in its original case, the value untouched. */
+/**
+ * One header line as it reached the process: the name in the case it arrived in (Cloud Run's front
+ * end lower-cases every name before that), the value untouched.
+ */
 export const RawHeaderSchema = z.tuple([z.string(), z.string()]);
 export type RawHeader = z.infer<typeof RawHeaderSchema>;
 

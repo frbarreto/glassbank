@@ -307,4 +307,22 @@ describe('the Overview (D-32)', () => {
     );
     expect(textOf(pub)).toContain('The public lane at a glance');
   });
+
+  it('says in one sentence how far back the server counted', () => {
+    const payload = {
+      ...statsFromStore(storeFromFixture(), 'all', FIXTURE_NOW),
+      source: 'server',
+      scanned: 7,
+      covers_from: '2026-09-27T21:47:00.000Z',
+      retention_hours: 72,
+      truncated: false,
+    };
+    const text = textOf(
+      renderOverview(
+        model({ viewer: { viewer_kind: 'public' }, overview: { window: '24h', payload } }),
+      ),
+    );
+    expect(text).toMatch(/\(7 events read\), which goes back to /);
+    expect(text).not.toContain('read). which');
+  });
 });

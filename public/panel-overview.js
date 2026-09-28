@@ -397,8 +397,9 @@ function coverage(payload, view) {
   if (payload.source === 'page') {
     return `Counted by this page from the recording (${count(payload.scanned)} events), because sample mode has no server to ask.`;
   }
-  const parts = [`Counted by this server over its own log (${count(payload.scanned)} events read)`];
-  if (payload.covers_from) parts.push(`which goes back to ${shortDateTime(payload.covers_from)}`);
+  let counted = `Counted by this server over its own log (${count(payload.scanned)} events read)`;
+  if (payload.covers_from) counted += `, which goes back to ${shortDateTime(payload.covers_from)}`;
+  const parts = [counted];
   parts.push(`It keeps ${payload.retention_hours} h at most and forgets everything on a restart`);
   if (payload.truncated) parts.push('The scan stopped at its cap, so these are lower bounds');
   const who =

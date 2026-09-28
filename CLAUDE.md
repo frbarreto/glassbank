@@ -37,7 +37,7 @@ Ids: `A-xx` assumption, `D-x` user decision, `ADR-x` architecture decision. Alwa
 ```
 npm ci                        # Node 22 (.nvmrc); 23 works
 npm run dev                   # tsx watch, http://localhost:8080
-npm run check                 # tsc + eslint + vitest: 1541 tests / 74 files - the definition of green
+npm run check                 # tsc + eslint + vitest: 1542 tests / 74 files - the definition of green
 npx vitest run src/<block>    # one block; the dashboard is `npx vitest run public/__tests__`
 npm run build && npm start    # what the container runs (dist/server.js)
 npm run login [-- --write]    # OAuth handshake in the browser; writes .glass-bank-token.json

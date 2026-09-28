@@ -190,7 +190,7 @@ replays `test/fixtures/events.jsonl` with no server traffic (`&rate=100` speeds 
 `http://localhost:8080/xray/?lane=public` (or "Watch the public lane" on the pairing screen) shows the
 anonymous callers of `/public/mcp` with no cookie, read-only; `curl -s
 "http://localhost:8080/xray/api/sessions?lane=public"` is the same over HTTP. Dashboard
-checks: `npx vitest run public/__tests__` (316 tests) and `node public/_dev/check-console.mjs` (headless Chrome
+checks: `npx vitest run public/__tests__` (317 tests) and `node public/_dev/check-console.mjs` (headless Chrome
 on an auto-assigned DevTools port, `CDP_PORT` pins it; interrupting the run still kills Chrome and
 removes its profile).
 

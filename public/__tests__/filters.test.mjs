@@ -124,9 +124,14 @@ describe('the stream client', () => {
       xs: null,
       all: false,
       lane: null,
+      page: null,
     });
     expect(readQuery('?lane=public').lane).toBe('public');
     expect(readQuery('?lane=private').lane).toBeNull();
+    // v0.10 (D-31): the view a link opens on; anything else is ignored.
+    expect(readQuery('?view=overview').page).toBe('overview');
+    expect(readQuery('?view=account').page).toBe('account');
+    expect(readQuery('?view=elsewhere').page).toBeNull();
   });
 
   it('adds lane=public to every read of the public lane, and nothing otherwise (D-26)', () => {

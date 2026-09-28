@@ -268,7 +268,17 @@ try {
   // The four-call ETL run shares one scratch table, so it must render as one thread with three
   // connectors: that is the derivation the whole view exists to show.
   check('a linked chain renders as one thread with connectors', paint.threads < paint.steps && paint.connectors >= 3, `${paint.threads} threads, ${paint.connectors} connectors`);
-  check('context rows explain what happened between the episodes', paint.context >= 3, `${paint.context} rows`);
+  // C1 (contracts v0.10): each session is one block; what happened before its first call is the
+  // connection line at its head, and opening it shows those steps as context rows.
+  const blocks = JSON.parse(await evaluate('JSON.stringify({sessions: document.querySelectorAll(".session-block").length, connection: (document.querySelector(".session-connection") || {}).textContent || "", badge: (document.querySelector(".session-head .identity-badge") || {}).textContent || ""})'));
+  check('the session is one block headed by its connection', blocks.sessions === 1 && /session started/.test(blocks.connection) && /tools\/list/.test(blocks.connection), `${blocks.sessions} blocks; ${blocks.connection}`);
+  check('the session head says the client name is a claim', /claims .* · unsigned/.test(blocks.badge), blocks.badge);
+  await evaluate("(() => { const toggle = document.querySelector('.connection-toggle'); if (toggle) toggle.click(); })()");
+  await sleep(400);
+  const contextRows = await evaluate('document.querySelectorAll(".flow-context").length');
+  check('context rows explain what happened between the episodes', contextRows >= 3, `${contextRows} rows once the connection is open`);
+  await evaluate("(() => { const toggle = document.querySelector('.connection-toggle'); if (toggle) toggle.click(); })()");
+  await sleep(300);
   check('the page never scrolls sideways', paint.wide === false, `scrollWidth over clientWidth: ${paint.wide}`);
   const eraseControls = await evaluate('document.querySelectorAll("[data-action=ask-erase]").length');
   check('the erase controls are offered to a paired viewer', eraseControls >= 1, `${eraseControls} controls`);

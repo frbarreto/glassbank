@@ -1,6 +1,6 @@
 # auth
 
-Status: done, contracts v0.5, wired in `src/composition.ts` (`createAuth({ config, personas: bankCore.personas, emitter, pairing })`; `auth.router` mounted at `/` by `src/app.ts`).
+Status: done, contracts v0.10, wired in `src/composition.ts` (`createAuth({ config, personas: bankCore.personas, emitter, pairing })`; `auth.router` mounted at `/` and `auth.botAuth.middleware` in front of every route by `src/app.ts`). v0.10 (D-29): the Web Bot Auth check, deployed 2026-09-27 with `BOT_AUTH_CHALLENGE=advertise`.
 
 ## Purpose
 The mock OAuth 2.1 authorization server (discovery, DCR, browser login and consent, `/token`, `/revoke`) and the resource-server verifier injected into `src/mcp`, on one origin.
@@ -20,14 +20,17 @@ Every token is an HS256 JWT signed with `OAUTH_SIGNING_KEY`; the only mutable st
 - `pages.ts` - server-rendered login, consent, consent-success and error pages; no framework, every value escaped.
 - `personas.ts` - `createSpikePersonaDirectory`: the fallback `PersonaDirectory` when none is injected; unused once wired.
 - `types.ts` - `AuthConfig`, `AuthRateLimitConfig`, `AuthDeps`, `GrantRecord`, `SpikeLogger`.
+- `bot-auth.ts` - `createBotAuth` (D-29): parses `Signature-Input`, `Signature` and `Signature-Agent`, rebuilds the RFC 9421 signature base, fetches the agent's JWKS from `<agent>/.well-known/http-message-signatures-directory` (https only, public addresses only, checked in the socket's own lookup, no redirects, `BOT_AUTH_FETCH_TIMEOUT_MS`, 64 KiB, one fetch in flight per agent, `BOT_AUTH_MAX_DIRECTORIES` cached for `Cache-Control: max-age` or `BOT_AUTH_DIRECTORY_TTL_S`, `BOT_AUTH_MAX_FETCHES_PER_HOUR`), verifies Ed25519 against the key whose RFC 7638 thumbprint or `kid` is the `keyid`, checks `created` / `expires` (60 s skew) and remembers nonces until `expires`. The middleware stores the result with `setSignatureCheck` and, under `BOT_AUTH_CHALLENGE=advertise`, sets `Accept-Signature` on `/mcp` and `/public/mcp`. It never answers and never changes an answer.
+- `structured-fields.ts` - the RFC 8941 dictionary, item and inner-list parser and serialiser the signature base needs.
 
 ## Public interface (`src/auth/index.ts`)
-- `createAuth(deps: AuthDeps): Auth` - `{ router, verifyAccessToken, jwt, lookupClient, personas, grants, revokeGrant, newId, clients, close }`.
+- `createAuth(deps: AuthDeps): Auth` - `{ router, verifyAccessToken, jwt, lookupClient, personas, grants, revokeGrant, newId, clients, botAuth, close }`; `botAuth` is `{ middleware, check(request), stats() }`.
+- `createBotAuth`, `ACCEPT_SIGNATURE_VALUE`, `DIRECTORY_PATH`, `jwkThumbprint`, `signatureBase`, `verdictRank` (D-29).
 - `DEFAULT_CONSENT_SUCCESS_REDIRECT_MS` (4000; `AuthDeps.consentSuccessRedirectMs: 0` disables the page); `pkceChallengeFor(verifier)` (PKCE S256, for tests and `test/e2e`); `createSpikePersonaDirectory`, `SEEDED_PERSONAS` (the fallback persona directory); `createClientPersistence`, `createNullClientPersistence` (the `AUTH_DB_PATH` table and its no-op stand-in).
 - Types: `Auth`, `AuthConfig`, `AuthDeps`, `AuthRateLimitConfig`, `ClientPersistence`, `GrantRecord`, `SpikeLogger`, `SpikeLogRecord`.
 
 ## Consumes
-- `AuthDeps`: `config: AuthConfig` (structural subset of `AppConfig`: `nodeEnv`, `publicBaseUrl`, `publicHosts`, `oauthSigningKey`, `featureFlags`, `maxDcrClients`, `authDbPath`, `cimdEnabled`, `rateLimits`); optional `personas` (`bankCore.personas`), `emitter` (`xray.emitter`), `pairing` (`xray.pairing`), `consentSuccessRedirectMs`, `now`, `log`, `randomId`. Without `emitter` the block logs to stdout instead.
+- `AuthDeps`: `config: AuthConfig` (structural subset of `AppConfig`: `nodeEnv`, `publicBaseUrl`, `publicHosts`, `oauthSigningKey`, `featureFlags`, `maxDcrClients`, `authDbPath`, `cimdEnabled`, `rateLimits`, and the optional `botAuth*` knobs); optional `personas` (`bankCore.personas`), `emitter` (`xray.emitter`), `pairing` (`xray.pairing`), `consentSuccessRedirectMs`, `now`, `log`, `randomId`. Without `emitter` the block logs to stdout instead.
 - `src/contracts`: `OAUTH_ROUTES`, `COOKIE_NAMES`, `TOKEN_LIFETIMES_SECONDS`, the JWT claim schemas, `JwtService`, `VerifyAccessToken`, the callback allowlist, the `PUBLIC_HOSTS` helpers, scopes, `PersonaDirectory`, `Pairing`, `XrayEmitter`. npm: `jose`, `better-sqlite3`, `express`.
 
 ## Routes (`routes.ts`; JSON and form bodies capped at 256 kb, their bytes kept by `keepRawBody` for the `raw` block of `http.request`, D-28; `OPTIONS` preflight on discovery, `/register`, `/token`, `/revoke`)
@@ -68,6 +71,7 @@ All through `safeEmitter`; `client_id` is always the 12-char SHA-256 fingerprint
 - `auth.token.issued` - `/token` code exchange: `grant_id`, `login_id`, `persona_id`, `scopes`, `auth_level`, `client_id`, `aud`, `expires_at`, `refresh_expires_at`.
 - `auth.token.refreshed` - `/token` refresh: as issued minus `aud`, plus `rotated_jti`.
 - `auth.token.revoked` - `/revoke`: `grant_id`, `login_id`, `client_id`, `reason: 'revocation_request'`.
+- `auth.directory.fetched` - every key-directory fetch of the Web Bot Auth check, failed ones and budget refusals included: `agent`, `url`, `outcome` (`ok`, `http_error`, `timeout`, `too_large`, `bad_json`, `blocked`, `network`, `rate_limited`), `status`, `key_count`, `duration_ms`, `ttl_s`, `error`; uncorrelated. The verdict itself is not an event: it is `http.request.signature`, on the record of the request it was computed from.
 - `auth.rejected` - AS-side refusals only: `status`, `error`, `reason` (`malformed`, `no_access_token`, `invalid_signature`, `expired`, `wrong_typ`, `unknown_client`, `invalid_grant`, `revoked_grant`, `rate_limited`), `client_id`; correlation `login_id`/`persona_id`/`grant_id` when known.
 
 ## Invariants held here
@@ -78,7 +82,8 @@ All through `safeEmitter`; `client_id` is always the 12-char SHA-256 fingerprint
 - Invariant 5 outranks 13: a throwing emitter, a broken SQLite table or a failing pairing service never fails an OAuth response. A-12, A-13: the callback allowlist plus mandatory PKCE S256 is the security boundary; `/authorize` never redirects to an unvalidated URI. A-37: `scopes_supported` follows `FEATURE_FLAGS`.
 
 ## How to test
-- `npx vitest run src/auth` - 91 tests in 8 files (metadata, the OAuth walk, stores, ids, events, DCR persistence across a restart, success page, grant cap).
+- `npx vitest run src/auth` - 113 tests in 9 files (metadata, the OAuth walk, stores, ids, events, DCR persistence across a restart, success page, grant cap, and `bot-auth.test.ts`: the RFC 9421 B.2.6 Ed25519 vector, the RFC 8037 thumbprint, every verdict, the directory cache and budget, the invitation, the address guard).
+- `npx vitest run src/__tests__/web-bot-auth.test.ts` - a real signed `initialize` through the whole graph with the key directory on loopback: `verified`, the directory fetch on the record, the identity on the session list, a tampered copy `invalid_signature` and answered all the same.
 - `npm run e2e:oauth` - DCR -> authorize -> login -> consent -> token -> refresh -> replays against the real server.
 - `bash infra/smoke.sh http://localhost:8080` - discovery on every `PUBLIC_HOSTS` entry, the 401 challenge, 30 `/register` calls without a 429.
 
@@ -87,5 +92,6 @@ All through `safeEmitter`; `client_id` is always the 12-char SHA-256 fingerprint
 - Deliberate deviations: an unrecognised `resource` falls back to the canonical MCP URL instead of `invalid_target` (RFC 8707) until a real client's value is observed; refresh-token reuse refuses the replay but does not revoke the family (a public demo's tokens leak from transcripts).
 - The per-IP and per-client 429s emit no `auth.*` event, only the catch-all `http.request` with status 429 (D-28); the stdout logger is a no-op whenever an emitter is injected, so `auth.metadata_served`, `auth.client.rejected` and `auth.rate_limited` are never printed in a wired server. Only the grant cap emits `auth.rejected {rate_limited}`.
 - `auth.client.registered` keeps five DCR fields; the whole registration body is in the `raw.body` of its `http.request`, not joined to it by any id. `auth.client.reconstructed {evicted_from_lru}` and `auth.token.revoked {grant_revoked, reuse_detected}` are contract values nothing emits.
+- Web Bot Auth (D-29): only Ed25519 is checked (`alg` otherwise is `unsupported`); `;sf`, `;bs`, `;req`, `;tr` and `@query-param` components are `unsupported`; the directory's own signature (directory draft section 5.2) is not checked, so the key set is trusted as served over https. No real MCP client has been seen signing yet (`docs/observations/claude-ai.md`). The directory fetch passes the address check inside the socket's lookup, but an IP literal in the `Signature-Agent` URL is checked before the socket opens.
 - Pairing codes live in `src/xray` memory, so a restart invalidates the link the success page printed.
 - Grant LRU (2000) and `ExpiringSet` capacity (100 000) are constants, not env knobs; `ExpiringSet.forcedEvictions` above zero means a replay window re-opened inside `exp` and is surfaced nowhere. An unknown `client_id` costs one SQLite `SELECT` per `/authorize` or `lookupClient` call.

@@ -62,6 +62,9 @@ describe('the X-ray HTTP read model', () => {
       healthz: '/healthz',
       health: '/health',
       export: '/xray/api/export',
+      // v0.10 (D-31, D-32): the overview and the account.
+      stats: '/xray/api/stats',
+      sessionBankActivity: '/xray/api/sessions/:xs/bank/activity',
     });
   });
 

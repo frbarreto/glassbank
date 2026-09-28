@@ -204,6 +204,65 @@ export const RawHttpRequestSchema = z.looseObject({
 });
 export type RawHttpRequest = z.infer<typeof RawHttpRequestSchema>;
 
+/**
+ * v0.10 (D-29): what this server made of a Web Bot Auth signature (HTTP Message Signatures,
+ * RFC 9421, with the `web-bot-auth` tag of draft-meunier-web-bot-auth-architecture).
+ *
+ * `verified` is the only verdict that names a provider: the signature checked out against a key
+ * the agent publishes at `<Signature-Agent>/.well-known/http-message-signatures-directory`.
+ * Everything else is a reason it did not. A verdict never changes how the request is answered:
+ * this server records and verifies, it never gates on a signature (D-29), the same way it never
+ * gates on `clientInfo` or `User-Agent`.
+ */
+export const BotAuthVerdictSchema = z.enum([
+  'verified',
+  'invalid_signature',
+  'unknown_key',
+  'directory_unreachable',
+  'expired',
+  'not_yet_valid',
+  'replayed',
+  'malformed',
+  'unsupported',
+  'unsigned',
+  'not_checked',
+]);
+export type BotAuthVerdict = z.infer<typeof BotAuthVerdictSchema>;
+
+/**
+ * v0.10 (D-29): the signature check of one request, on `http.request.signature`. Present when the
+ * request carried a signature header or when this server sent the `Accept-Signature` invitation;
+ * absent on every other request, whose `raw.headers` already say it was unsigned.
+ */
+export const SignatureCheckSchema = z.looseObject({
+  /** True when `Signature` or `Signature-Input` arrived. */
+  present: z.boolean(),
+  verdict: BotAuthVerdictSchema,
+  /** The signature label checked (`sig1`), the first one tagged `web-bot-auth`. */
+  label: z.string().nullable().default(null),
+  /** The `Signature-Agent` URI as sent (quotes removed), the only name a verdict can vouch for. */
+  agent: z.string().nullable().default(null),
+  keyid: z.string().nullable().default(null),
+  tag: z.string().nullable().default(null),
+  alg: z.string().nullable().default(null),
+  /** `created` and `expires` of the signature parameters, in seconds since the epoch. */
+  created: z.int().nullable().default(null),
+  expires: z.int().nullable().default(null),
+  nonce_present: z.boolean().default(false),
+  /** The covered components, in the order the signature lists them. */
+  components: z.array(z.string()).default([]),
+  directory_url: z.string().nullable().default(null),
+  /** Where the key came from: this process's directory cache, a fresh fetch, or nowhere. */
+  cache: z.enum(['hit', 'miss', 'none']).default('none'),
+  /** One sentence on why the verdict is not `verified`; `null` when it is. */
+  reason: z.string().nullable().default(null),
+  /** True when this response carried `Accept-Signature`, inviting the client to sign. */
+  challenge_sent: z.boolean().default(false),
+  /** How long the check took, directory fetch included. */
+  duration_ms: z.number().nonnegative().nullable().default(null),
+});
+export type SignatureCheck = z.infer<typeof SignatureCheckSchema>;
+
 export const HttpRequestData = z.looseObject({
   method: z.string(),
   path: z.string(),
@@ -225,6 +284,8 @@ export const HttpRequestData = z.looseObject({
   rate_limited: z.boolean().default(false),
   /** v0.9 (D-28): the request as it arrived. Absent on rows recorded before v0.9. */
   raw: RawHttpRequestSchema.optional(),
+  /** v0.10 (D-29): the Web Bot Auth check; absent when nothing was signed or invited. */
+  signature: SignatureCheckSchema.optional(),
 });
 
 // ---------------------------------------------------------------------------
@@ -280,6 +341,34 @@ export const AuthRejectedData = z.looseObject({
 
 /** Why the verifier turned a bearer token down (`auth.rejected.data.reason`). */
 export type AuthRejectionReason = z.infer<typeof AuthRejectedData>['reason'];
+
+/**
+ * v0.10 (D-29): this server fetched an agent's key directory to check a Web Bot Auth signature.
+ * A request to a third party is something this server did, so it is on the record even when it
+ * failed; the cache means one per agent per `BOT_AUTH_DIRECTORY_TTL_S`, not one per request.
+ */
+export const AuthDirectoryFetchedData = z.looseObject({
+  /** The `Signature-Agent` URI the directory was derived from. */
+  agent: z.string(),
+  url: z.string(),
+  outcome: z.enum([
+    'ok',
+    'http_error',
+    'timeout',
+    'too_large',
+    'bad_json',
+    'blocked',
+    'network',
+    'rate_limited',
+  ]),
+  status: z.int().nullable().default(null),
+  /** Ed25519 keys the directory held that this server can use. */
+  key_count: z.int().nonnegative().default(0),
+  duration_ms: z.number().nonnegative().default(0),
+  /** How long the keys are cached, from `Cache-Control: max-age` or `BOT_AUTH_DIRECTORY_TTL_S`. */
+  ttl_s: z.int().nonnegative().nullable().default(null),
+  error: z.string().nullable().default(null),
+});
 
 export const AuthClientRegisteredData = z.looseObject({
   client_id: z.string(),
@@ -847,6 +936,7 @@ export const AuthTokenRefreshedEvent = event('auth.token.refreshed', AuthTokenRe
 export const AuthTokenRevokedEvent = event('auth.token.revoked', AuthTokenRevokedData);
 export const AuthStepupRequestedEvent = event('auth.stepup.requested', AuthStepupRequestedData);
 export const AuthLoginCreatedEvent = event('auth.login.created', AuthLoginCreatedData);
+export const AuthDirectoryFetchedEvent = event('auth.directory.fetched', AuthDirectoryFetchedData);
 export const SessionStartedEvent = event('session.started', SessionStartedData);
 export const SessionInitializedEvent = event('session.initialized', SessionInitializedData);
 export const SessionEndedEvent = event('session.ended', SessionEndedData);
@@ -902,6 +992,7 @@ export const XrayEventSchema = z.discriminatedUnion('type', [
   AuthTokenRevokedEvent,
   AuthStepupRequestedEvent,
   AuthLoginCreatedEvent,
+  AuthDirectoryFetchedEvent,
   SessionStartedEvent,
   SessionInitializedEvent,
   SessionEndedEvent,

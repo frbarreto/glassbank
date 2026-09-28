@@ -9,6 +9,7 @@
  *
  * No DOM, no network. Pure data in, pure data out.
  */
+import { emptyIdentity, foldHttpIdentity, mergeIdentity } from './identity.js';
 import { callKeyOf, familyOf, statusOf, toolOf } from './catalogue.js';
 import { percentile, toEpoch } from './format.js';
 
@@ -107,6 +108,8 @@ function emptySession(event) {
     /** Smallest and largest event id seen for this `xs`; the boot marker is derived from them. */
     first_event_id: null,
     last_event_id: null,
+    /** v0.10 (D-29): the signature verdict and the claimed names, kept apart (`identity.js`). */
+    identity: emptyIdentity(),
   };
 }
 
@@ -463,6 +466,7 @@ export function createStore() {
         break;
       case 'http.request': {
         state.counters.http_requests += 1;
+        if (session) foldHttpIdentity(session.identity, data);
         if (Number(data.status ?? 0) >= 400) state.counters.http_errors += 1;
         const key = callKeyOf(event);
         if (key) {
@@ -769,11 +773,13 @@ export function createStore() {
           ended: false,
           end_reason: null,
           source: 'api',
+          identity: mergeIdentity(null, row.identity),
         });
         noteLogin(row.login_id, row.grant_id);
         continue;
       }
       existing.persona = row.persona ?? existing.persona;
+      existing.identity = mergeIdentity(existing.identity, row.identity);
       existing.parent_grant_id = row.parent_grant_id ?? existing.parent_grant_id;
       existing.token_expires_at = existing.token_expires_at ?? row.token_expires_at ?? null;
       existing.boot_id = existing.boot_id ?? row.boot_id ?? null;

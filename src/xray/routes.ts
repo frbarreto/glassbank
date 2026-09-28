@@ -39,6 +39,7 @@ import {
   type XraySessionEventsResponse,
   type XraySessionSummary,
   type XrayDeleteResponse,
+  type XrayBankActivityResponse,
   type XraySessionBankResponse,
   type XraySessionsResponse,
   type XrayEvent,
@@ -52,7 +53,14 @@ import type { ReadModel, SessionRow } from './read-model.js';
 import { ipPrefixOf, viewEvent } from './redaction.js';
 import type { Ring } from './ring.js';
 import { logFilterFor, openSseStream, type SseStream } from './sse.js';
-import type { BankSummaryLookup, PersonaLookup, ViewerIdentity, XrayConfig } from './types.js';
+import { parseWindow, type Overview } from './overview.js';
+import type {
+  BankActivityLookup,
+  BankSummaryLookup,
+  PersonaLookup,
+  ViewerIdentity,
+  XrayConfig,
+} from './types.js';
 import {
   issueViewerCookie,
   publicLaneViewer,
@@ -83,6 +91,10 @@ export interface XrayRoutesRuntime {
   readonly now: () => Date;
   readonly lookupPersona?: PersonaLookup | undefined;
   readonly lookupBankSummary?: BankSummaryLookup | undefined;
+  /** v0.10 (D-31): the account view; absent in a unit test, where the route answers 503. */
+  readonly lookupBankActivity?: BankActivityLookup | undefined;
+  /** v0.10 (D-32): the overview counter behind `GET /xray/api/stats`. */
+  readonly overview: Overview;
   readonly heartbeatMs?: number | undefined;
   readonly onError: (error: unknown, where: string) => void;
   /** Every open stream, so `shutdown` can end them inside the 10 s SIGTERM budget. */
@@ -317,6 +329,7 @@ export function buildXrayRouter(runtime: XrayRoutesRuntime): Router {
       error_count: row.error_count,
       token_expires_at: row.token_expires_at,
       boot_id: row.boot_id,
+      identity: { ...row.identity },
     };
   }
 
@@ -661,6 +674,63 @@ export function buildXrayRouter(runtime: XrayRoutesRuntime): Router {
       runtime.onError(error, 'sessionBank');
       sendError(response, 500, 'internal_error', 'The persona card could not be built.');
     });
+  });
+
+  /**
+   * `GET /xray/api/sessions/:xs/bank/activity` (v0.10, D-31): the account view. Same visibility
+   * rule as the persona card; the public lane's anonymous visitors have no persona (404).
+   */
+  router.get(mounted(XRAY_ROUTES.sessionBankActivity), requireViewer, (request, response) => {
+    void (async () => {
+      const xs = String(request.params.xs ?? '');
+      const query = request.query as Record<string, unknown>;
+      const scope = scopeOf({ ...query, xs }, response);
+      if (!scope) return;
+      const row = readModel.session(xs);
+      if (!row) {
+        sendError(response, 404, 'not_found', 'No such session.');
+        return;
+      }
+      if (row.persona_id === null) {
+        sendError(response, 404, 'no_persona', 'This session has no persona yet.');
+        return;
+      }
+      if (!runtime.lookupBankActivity) {
+        sendError(response, 503, 'unavailable', 'The bank is not wired into this dashboard.');
+        return;
+      }
+      const months = positiveInteger(query.months, 3, 12);
+      const activity = await runtime.lookupBankActivity(
+        { persona_id: row.persona_id, login_id: row.login_id, grant_id: row.grant_id },
+        { months },
+      );
+      if (activity === null) {
+        sendError(response, 404, 'no_persona', 'The persona behind this session is unknown.');
+        return;
+      }
+      const payload: XrayBankActivityResponse = { ...activity, xs: row.xs, login_id: row.login_id };
+      response.status(200).json(payload);
+    })().catch((error: unknown) => {
+      runtime.onError(error, 'sessionBankActivity');
+      sendError(response, 500, 'internal_error', 'The account view could not be built.');
+    });
+  });
+
+  /**
+   * `GET /xray/api/stats?window=24h` (v0.10, D-32): the overview of every event the scope may read,
+   * counted by the server because the page only holds a few sessions of the log.
+   */
+  router.get(mounted(XRAY_ROUTES.stats), requireViewer, (request, response) => {
+    try {
+      const query = request.query as Record<string, unknown>;
+      const scope = scopeOf(query, response);
+      if (!scope) return;
+      response.setHeader('Cache-Control', 'no-store');
+      response.status(200).json(runtime.overview.stats(scope, parseWindow(firstString(query.window))));
+    } catch (error) {
+      runtime.onError(error, 'stats');
+      sendError(response, 500, 'internal_error', 'The overview could not be computed.');
+    }
   });
 
   router.get(mounted(XRAY_ROUTES.catalog), requireViewer, (request, response) => {

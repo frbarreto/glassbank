@@ -77,6 +77,8 @@ const STATIC_ACTORS = {
   'auth.token.revoked': 'server',
   'auth.stepup.requested': 'server',
   'auth.login.created': 'server',
+  // v0.10 (D-29): this server fetched an agent's key directory to check a signature.
+  'auth.directory.fetched': 'server',
   'session.started': 'server',
   'session.initialized': 'agent',
   'session.ended': 'server',

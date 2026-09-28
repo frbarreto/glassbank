@@ -10,7 +10,7 @@
  * `?fixture=1` swaps the live SSE client for a player over `test/fixtures/events.jsonl`, so the
  * whole UI can be built and driven with no server running.
  */
-import { PUBLIC_LOGIN_ID, createApi, readQuery } from './api.js';
+import { PAGES, PUBLIC_LOGIN_ID, createApi, readQuery } from './api.js';
 import { createStore } from './store.js';
 import { createFixtureSource, createLiveSource } from './stream.js';
 import { parseFilter, toggleToken } from './filters.js';
@@ -52,6 +52,8 @@ import { renderSqlData } from './panel-sql-data.js';
 import { renderNowStrip } from './panel-now-strip.js';
 import { renderErrorsHealth } from './panel-errors-health.js';
 import { BANK_REFRESH_OPERATIONS, effectiveSessionXs, renderPersona } from './panel-persona.js';
+import { STATEMENT_PAGE, accountSessionXs, renderAccount } from './panel-account.js';
+import { renderOverview, statsFromStore } from './panel-overview.js';
 import {
   renderConnectScreen,
   renderSharedPersonaBanner,
@@ -73,6 +75,14 @@ const FIXTURE_RATES = [1, 5, 20, 100];
 const BANK_REFRESH_MS = 60_000;
 /** A burst of `bank.op` events (a transfer plus its audit entry) costs one fetch, not several. */
 const BANK_DEBOUNCE_MS = 300;
+/** How often the Overview re-counts while it is on screen (the server caches for 5 s). */
+const OVERVIEW_REFRESH_MS = 15_000;
+
+/** The page a viewer lands on (D-31): the public lane opens on its Overview, everyone else on the chain. */
+function initialPage() {
+  if (query.page) return query.page;
+  return query.lane === 'public' ? 'overview' : 'chain';
+}
 
 const store = createStore();
 const query = readQuery(location.search);
@@ -141,6 +151,23 @@ const view = {
   notice: null,
   /** The persona card's data: `GET /xray/api/sessions/:xs/bank` for the effective session. */
   bank: { xs: null, payload: null, error: null, fetchedAt: null, busy: false },
+  /** Which top-level view is on screen (D-31): `chain`, `account` or `overview`. */
+  page: initialPage(),
+  /** The Account view: `GET /xray/api/sessions/:xs/bank/activity` and the statement filter. */
+  account: {
+    xs: null,
+    months: 3,
+    payload: null,
+    error: null,
+    busy: false,
+    fetchedAt: null,
+    filter: {},
+    statementRows: STATEMENT_PAGE,
+    revision: 0,
+  },
+  /** The Overview: `GET /xray/api/stats` for the window, or the recording counted in the page. */
+  // A recording spans minutes, so sample mode opens on everything it holds.
+  overview: { window: query.fixture ? 'all' : '24h', payload: null, error: null, busy: false, fetchedAt: null, revision: 0 },
   /**
    * The erase controls of the Sessions panel. `scope` is `null` when nothing is armed, `login` for
    * the whole history, or an `xs` for one session; it is what makes the second click necessary.
@@ -155,6 +182,7 @@ const scheduleRender = createScheduler(render);
 /** What the timeline was last painted from; an unchanged signature skips the repaint. */
 let lastTimelineSignature = null;
 let lastDetailSignature = null;
+let lastPageSignature = null;
 /** True for one frame around the scroll this page performs itself; see `revealLastToggled`. */
 let programmaticScroll = false;
 
@@ -267,6 +295,55 @@ function detailSignature() {
   ].join('|');
 }
 
+/** What the Account and Overview pages depend on; the 250 ms clock alone never repaints them. */
+function pageSignature() {
+  const account = view.account;
+  const overview = view.overview;
+  return [
+    view.page,
+    view.mode,
+    view.selectedXs,
+    view.viewer?.viewer_kind ?? '',
+    account.revision,
+    account.busy,
+    account.statementRows,
+    JSON.stringify(account.filter),
+    overview.revision,
+    overview.window,
+    overview.busy,
+    // The audit links and the "read by the model" list come from the store.
+    view.page === 'account' || view.mode === 'fixture' ? store.lastEventId : '',
+  ].join('|');
+}
+
+/** The switch between the three views, in the header (D-31). */
+function pageSwitch() {
+  const isPublic = view.viewer?.viewer_kind === 'public';
+  const pages = [
+    { id: 'chain', label: 'Chain', title: 'Every session as a chain of calls: what went in, what happened inside, what came out' },
+    {
+      id: 'account',
+      label: 'Account',
+      title: isPublic ? 'Anonymous visitors hold no account' : 'The money behind the session: spending, statement, cards, bills and what the agent changed',
+      disabled: isPublic,
+    },
+    { id: 'overview', label: 'Overview', title: 'Counts across every session you can see: calls, failures, clients, what they asked for' },
+  ];
+  return h(
+    'nav',
+    { class: 'page-switch', 'aria-label': 'View' },
+    ...pages.map((page) =>
+      button(page.label, 'set-page', {
+        arg: page.id,
+        variant: 'seg',
+        pressed: view.page === page.id,
+        disabled: page.disabled,
+        title: page.title,
+      }),
+    ),
+  );
+}
+
 function fixtureControls() {
   if (view.mode !== 'fixture') return null;
   const fixture = view.fixture;
@@ -313,6 +390,7 @@ function renderHeader() {
       h('span', { class: 'brand-mark' }, 'Glass Bank'),
       h('span', { class: 'brand-sub' }, 'X-ray'),
     ),
+    pageSwitch(),
     h(
       'div',
       { class: 'header-stats' },
@@ -376,6 +454,25 @@ function render() {
   mount(document.getElementById('header'), renderHeader());
   mount(document.getElementById('banner'), h('div', {}, renderStreamBanner(context), view.notice));
   mount(document.getElementById('now'), renderNowStrip(context));
+
+  // The Account and the Overview take the whole width; the chain keeps its three columns (D-31).
+  const wide = view.page !== 'chain';
+  document.body.setAttribute('data-page', view.page);
+  document.getElementById('layout').hidden = wide;
+  const widePanel = document.getElementById('page-wide');
+  widePanel.hidden = !wide;
+  if (wide) {
+    if (view.mode === 'fixture' && view.page === 'overview') ensureFixtureOverview();
+    const signature = pageSignature();
+    if (signature !== lastPageSignature) {
+      lastPageSignature = signature;
+      mount(widePanel, view.page === 'account' ? renderAccount(context) : renderOverview(context), {
+        scroll: 'preserve',
+      });
+    }
+    return;
+  }
+  lastPageSignature = null;
   mount(
     document.getElementById('panel-sessions'),
     h(
@@ -562,6 +659,7 @@ function onEvent(envelope) {
     ) {
       // A lock, unlock, confirmed transfer or reset changed what the persona holds.
       scheduleBankRefresh();
+      if (view.page === 'account') scheduleAccountRefresh();
     } else if (effectiveSessionXs(store, view) !== view.bank.xs) {
       // A new session became the most recent one, so the card now describes it.
       scheduleBankRefresh();
@@ -623,6 +721,144 @@ function scheduleBankRefresh(delay = BANK_DEBOUNCE_MS) {
     bankTimer = null;
     refreshBank();
   }, delay);
+}
+
+// ---------------------------------------------------------------------------
+// The Account and the Overview (D-31, D-32)
+// ---------------------------------------------------------------------------
+
+let accountRequest = 0;
+let accountTimer = null;
+
+/** Reads the account view of the effective session into `view.account`. */
+async function refreshAccount() {
+  if (!view.ready) return;
+  if (view.mode === 'fixture') {
+    if (view.account.payload || view.account.busy) return;
+    view.account = { ...view.account, busy: true, revision: view.account.revision + 1 };
+    const result = await api.fixtureActivity();
+    view.account = {
+      ...view.account,
+      xs: result.payload?.xs ?? null,
+      payload: result.ok ? result.payload : null,
+      error: result.ok ? null : 'The sample account (fixtures/bank-activity.json) could not be read.',
+      busy: false,
+      revision: view.account.revision + 1,
+    };
+    scheduleRender();
+    return;
+  }
+  const xs = accountSessionXs(store, view);
+  if (!xs) {
+    view.account = { ...view.account, xs: null, payload: null, error: null, revision: view.account.revision + 1 };
+    scheduleRender();
+    return;
+  }
+  const same = view.account.xs === xs;
+  const requestId = (accountRequest += 1);
+  view.account = {
+    ...view.account,
+    xs,
+    payload: same ? view.account.payload : null,
+    busy: true,
+    revision: view.account.revision + 1,
+  };
+  scheduleRender();
+  const result = await api.sessionBankActivity(xs, view.account.months);
+  if (requestId !== accountRequest) return;
+  view.account = {
+    ...view.account,
+    payload: result.ok ? result.payload : view.account.payload,
+    error: result.ok
+      ? null
+      : (result.payload?.message ?? `The account could not be read (status ${result.status || 'no response'}).`),
+    busy: false,
+    fetchedAt: Date.now(),
+    revision: view.account.revision + 1,
+  };
+  scheduleRender();
+}
+
+function scheduleAccountRefresh(delay = BANK_DEBOUNCE_MS) {
+  clearTimeout(accountTimer);
+  accountTimer = setTimeout(() => {
+    accountTimer = null;
+    refreshAccount();
+  }, delay);
+}
+
+let overviewRequest = 0;
+
+/** Asks the server to count the window; over the recording the page counts it itself. */
+async function refreshOverview() {
+  if (!view.ready) return;
+  if (view.mode === 'fixture') {
+    view.overview = { ...view.overview, payload: null };
+    ensureFixtureOverview();
+    scheduleRender();
+    return;
+  }
+  const requestId = (overviewRequest += 1);
+  view.overview = { ...view.overview, busy: true, revision: view.overview.revision + 1 };
+  scheduleRender();
+  const result = await api.stats(view.overview.window, { all: query.all });
+  if (requestId !== overviewRequest) return;
+  view.overview = {
+    ...view.overview,
+    payload: result.ok ? result.payload : view.overview.payload,
+    error: result.ok
+      ? null
+      : (result.payload?.message ?? `The overview could not be counted (status ${result.status || 'no response'}).`),
+    busy: false,
+    fetchedAt: Date.now(),
+    revision: view.overview.revision + 1,
+  };
+  scheduleRender();
+}
+
+/** The recording, counted in this browser; recomputed whenever the store moved on. */
+let fixtureOverviewAt = -1;
+function ensureFixtureOverview() {
+  const key = `${store.lastEventId}|${view.overview.window}`;
+  if (view.overview.payload && fixtureOverviewAt === key) return;
+  fixtureOverviewAt = key;
+  view.overview = {
+    ...view.overview,
+    payload: statsFromStore(store, view.overview.window, nowMs()),
+    error: null,
+    revision: view.overview.revision + 1,
+  };
+}
+
+/** Switches the top-level view and fetches what it needs; the URL keeps `?view=` for a deep link. */
+function setPage(page) {
+  if (!PAGES.includes(page)) return;
+  if (page === 'account' && view.viewer?.viewer_kind === 'public') return;
+  view.page = page;
+  try {
+    const url = new URL(location.href);
+    if (page === initialPageFor(url)) url.searchParams.delete('view');
+    else url.searchParams.set('view', page);
+    window.history.replaceState(null, '', url.toString());
+  } catch {
+    // A page without history support still switches.
+  }
+  if (page === 'account') refreshAccount();
+  if (page === 'overview') refreshOverview();
+  scheduleRender();
+}
+
+/** The page a URL lands on without `?view=`. */
+function initialPageFor(url) {
+  return url.searchParams.get('lane') === 'public' ? 'overview' : 'chain';
+}
+
+function setAccountFilter(field, value) {
+  const filter = { ...view.account.filter };
+  if (value) filter[field] = value;
+  else delete filter[field];
+  view.account = { ...view.account, filter, statementRows: STATEMENT_PAGE };
+  scheduleRender();
 }
 
 function onState(state) {
@@ -733,11 +969,59 @@ function jumpToLive() {
 }
 
 const actions = {
+  'set-page': (arg) => setPage(arg),
+  'account-months': (arg) => {
+    const months = Number(arg);
+    if (![1, 3, 6, 12].includes(months) || view.mode === 'fixture') return;
+    view.account = { ...view.account, months };
+    refreshAccount();
+  },
+  'account-refresh': () => {
+    if (view.mode === 'fixture') view.account = { ...view.account, payload: null };
+    refreshAccount();
+  },
+  'account-filter': (field, value) => {
+    // A second click on the category that is already the filter clears it.
+    setAccountFilter(field, view.account.filter[field] === value ? '' : value);
+  },
+  'account-filter-clear': () => {
+    view.account = { ...view.account, filter: {}, statementRows: STATEMENT_PAGE };
+    scheduleRender();
+  },
+  'account-more': () => {
+    view.account = { ...view.account, statementRows: view.account.statementRows + STATEMENT_PAGE };
+    scheduleRender();
+  },
+  /** From "Changed by the agent" to the call that made the change, open, in the chain. */
+  'account-open-call': (arg) => {
+    const call = store.getCall(arg);
+    if (!call) return;
+    toggleOpen(view, `call:${call.key}`, false);
+    view.selectedCallKey = call.key;
+    view.selectedEventId = call.event_id;
+    view.detailTab = 'call';
+    setPage('chain');
+  },
+  'overview-window': (arg) => {
+    if (!['1h', '24h', '7d', 'all'].includes(arg)) return;
+    view.overview = { ...view.overview, window: arg, payload: null };
+    refreshOverview();
+  },
+  'overview-refresh': () => refreshOverview(),
+  /** From the Overview's problem list to the session it happened in. */
+  'open-session': (arg) => {
+    if (!arg) return;
+    view.selectedXs = store.getSession(arg) ? arg : view.selectedXs;
+    view.selectedCallKey = null;
+    view.selectedEventId = null;
+    setPage('chain');
+  },
   'select-session': (arg) => {
     view.selectedXs = arg || null;
     view.selectedCallKey = null;
     view.selectedEventId = null;
     if (effectiveSessionXs(store, view) !== view.bank.xs) scheduleBankRefresh(0);
+    if (view.page === 'account') refreshAccount();
     scheduleRender();
   },
   'set-timeline-mode': (arg) => {
@@ -985,6 +1269,7 @@ function wireDom() {
     const target = event.target;
     if (!target || !target.id) return;
     if (target.id === 'filter-input') setFilter(target.value);
+    if (target.id === 'account-filter-text') setAccountFilter('text', target.value);
     if (target.id === 'pair-input') {
       const raw = target.value;
       const fromUrl = raw.includes('/') ? codeFromUrl(raw) : null;
@@ -993,6 +1278,13 @@ function wireDom() {
       target.value = code;
       scheduleRender();
     }
+  });
+
+  // The statement's selects (Account view): one field each, named by `data-account-filter`.
+  root.addEventListener('change', (event) => {
+    const target = event.target;
+    const field = target && target.getAttribute ? target.getAttribute('data-account-filter') : null;
+    if (field && field !== 'text') setAccountFilter(field, target.value);
   });
 
   root.addEventListener('submit', (event) => {
@@ -1067,6 +1359,7 @@ function startFixture() {
     rate: view.fixture.rate,
   });
   source.start({ applyAll: query.autoplay === 'all' });
+  if (view.page === 'account') refreshAccount();
 }
 
 async function startLive() {
@@ -1106,6 +1399,8 @@ async function startLive() {
   source.start();
   render();
   refreshBank();
+  if (view.page === 'account') refreshAccount();
+  if (view.page === 'overview') refreshOverview();
 }
 
 /** Sessions to backfill: the one asked for, else the most recent few the viewer owns. */
@@ -1166,6 +1461,12 @@ function startClock() {
     if (document.visibilityState !== 'visible') return;
     refreshBank();
   }, BANK_REFRESH_MS);
+  // The Overview re-counts while someone is looking at it.
+  setInterval(() => {
+    if (!view.ready || view.mode !== 'live' || view.page !== 'overview') return;
+    if (document.visibilityState !== 'visible') return;
+    refreshOverview();
+  }, OVERVIEW_REFRESH_MS);
 }
 
 function boot() {

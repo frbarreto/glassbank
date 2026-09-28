@@ -96,9 +96,9 @@ describe('the XrayEvent envelope', () => {
 });
 
 describe('the event catalogue', () => {
-  it('has 46 types across the twelve documented families', () => {
-    expect(XRAY_EVENT_TYPES).toHaveLength(46);
-    expect(new Set(XRAY_EVENT_TYPES).size).toBe(46);
+  it('has 47 types across the twelve documented families', () => {
+    expect(XRAY_EVENT_TYPES).toHaveLength(47);
+    expect(new Set(XRAY_EVENT_TYPES).size).toBe(47);
     const families = new Set(XRAY_EVENT_TYPES.map(familyOf));
     expect([...families].sort()).toEqual([...XRAY_EVENT_FAMILIES].sort());
   });

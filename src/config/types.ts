@@ -72,6 +72,16 @@ export interface AppConfig {
   readonly maxDcrClients: number;
   readonly cimdEnabled: boolean;
 
+  /** v0.10 (D-29): Web Bot Auth. Verify signatures, invite them, never gate on them. */
+  readonly botAuthVerify: boolean;
+  readonly botAuthChallenge: 'off' | 'advertise';
+  readonly botAuthDirectoryTtlS: number;
+  readonly botAuthFetchTimeoutMs: number;
+  readonly botAuthMaxDirectories: number;
+  readonly botAuthMaxFetchesPerHour: number;
+  /** Development only: `http://` and loopback directories, for a local demo signer. */
+  readonly botAuthAllowLoopback: boolean;
+
   readonly maxTablesPerGrant: number;
   readonly maxScratchDbs: number;
   readonly maxQueryRows: number;

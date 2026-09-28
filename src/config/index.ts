@@ -148,6 +148,18 @@ const schema = z.object({
   MAX_DCR_CLIENTS: intVar(1000, 1, 1_000_000),
   CIMD_ENABLED: boolVar(false),
 
+  // Web Bot Auth (v0.10, D-29): record and verify signatures, optionally invite them; never gate.
+  BOT_AUTH_VERIFY: boolVar(true),
+  BOT_AUTH_CHALLENGE: z.preprocess(
+    (v) => (v === undefined || v === '' ? 'off' : v),
+    z.enum(['off', 'advertise']),
+  ),
+  BOT_AUTH_DIRECTORY_TTL_S: intVar(3600, 60, 86_400),
+  BOT_AUTH_FETCH_TIMEOUT_MS: intVar(3000, 100, 30_000),
+  BOT_AUTH_MAX_DIRECTORIES: intVar(100, 1, 10_000),
+  BOT_AUTH_MAX_FETCHES_PER_HOUR: intVar(60, 1, 100_000),
+  BOT_AUTH_ALLOW_LOOPBACK: boolVar(false),
+
   // ETL / scratch SQL guard
   MAX_TABLES_PER_GRANT: intVar(10, 1, 1000),
   MAX_SCRATCH_DBS: intVar(200, 1, 100_000),
@@ -223,6 +235,10 @@ export function loadConfig(env: RawEnv = process.env): AppConfig {
       'XRAY_ADMIN_TOKEN: must be set from Secret Manager when NODE_ENV=production (the development default is refused)',
     );
   }
+  // A signature directory on loopback or plain http is a local demo, never a deployment (D-29).
+  if (parsed.NODE_ENV === 'production' && parsed.BOT_AUTH_ALLOW_LOOPBACK) {
+    problems.push('BOT_AUTH_ALLOW_LOOPBACK: must stay off when NODE_ENV=production');
+  }
   if (problems.length > 0) throw new ConfigError(problems);
 
   // The canonical base URL's own host is always accepted, so PUBLIC_HOSTS may be left empty locally.
@@ -256,6 +272,14 @@ export function loadConfig(env: RawEnv = process.env): AppConfig {
     authDbPath: parsed.AUTH_DB_PATH,
     maxDcrClients: parsed.MAX_DCR_CLIENTS,
     cimdEnabled: parsed.CIMD_ENABLED,
+
+    botAuthVerify: parsed.BOT_AUTH_VERIFY,
+    botAuthChallenge: parsed.BOT_AUTH_CHALLENGE,
+    botAuthDirectoryTtlS: parsed.BOT_AUTH_DIRECTORY_TTL_S,
+    botAuthFetchTimeoutMs: parsed.BOT_AUTH_FETCH_TIMEOUT_MS,
+    botAuthMaxDirectories: parsed.BOT_AUTH_MAX_DIRECTORIES,
+    botAuthMaxFetchesPerHour: parsed.BOT_AUTH_MAX_FETCHES_PER_HOUR,
+    botAuthAllowLoopback: parsed.BOT_AUTH_ALLOW_LOOPBACK,
 
     maxTablesPerGrant: parsed.MAX_TABLES_PER_GRANT,
     maxScratchDbs: parsed.MAX_SCRATCH_DBS,

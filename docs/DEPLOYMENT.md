@@ -41,7 +41,7 @@ Steps, every one with `--project=lake-fraude --region=us-central1`:
 
 1. Build: `gcloud builds submit --config=infra/cloudbuild.yaml --substitutions=_IMAGE=<image> .` (the Dockerfile lives under `infra/`, so `--tag` cannot be used).
 2. Deploy: `gcloud run deploy mcp-bank --image=<image> --platform=managed --service-account=mcp-bank-run@lake-fraude.iam.gserviceaccount.com --allow-unauthenticated --ingress=all --port=8080 --cpu=1 --memory=1Gi --no-cpu-throttling --min-instances=1 --max-instances=1 --concurrency=250 --timeout=3600 --cpu-boost --execution-environment=gen2 --set-env-vars=... --set-secrets=OAUTH_SIGNING_KEY=mcp-bank-oauth-signing-key:latest,XRAY_ADMIN_TOKEN=mcp-bank-admin-token:latest`.
-3. `--set-env-vars` carries exactly `NODE_ENV=production`, `PUBLIC_BASE_URL`, `PUBLIC_HOSTS`, `ORIGIN_POLICY`, `FEATURE_FLAGS`, `XRAY_DB_PATH`, `AUTH_DB_PATH` and `LOG_LEVEL`; each defaults as in section 11 (`PUBLIC_BASE_URL` and `PUBLIC_HOSTS` to the deterministic `run.app` form) and is overridable from the shell. `;` separates list values because `--set-env-vars` splits on commas. `ORIGIN_POLICY` must be `log-only` or `allowlist`. No other knob passes through.
+3. `--set-env-vars` carries exactly `NODE_ENV=production`, `PUBLIC_BASE_URL`, `PUBLIC_HOSTS`, `ORIGIN_POLICY`, `BOT_AUTH_CHALLENGE`, `FEATURE_FLAGS`, `XRAY_DB_PATH`, `AUTH_DB_PATH` and `LOG_LEVEL`; each defaults as in section 11 except `BOT_AUTH_CHALLENGE`, which `deploy.sh` sets to `advertise` (D-29) (`PUBLIC_BASE_URL` and `PUBLIC_HOSTS` to the deterministic `run.app` form) and is overridable from the shell. `;` separates list values because `--set-env-vars` splits on commas. `ORIGIN_POLICY` must be `log-only` or `allowlist`, `BOT_AUTH_CHALLENGE` `off` or `advertise`. No other knob passes through.
 4. Correction (A-36): `gcloud run services describe mcp-bank --format='value(status.url)'`; if `status.url` differs from `PUBLIC_BASE_URL`, `gcloud run services update mcp-bank --update-env-vars=PUBLIC_BASE_URL=<status.url>,PUBLIC_HOSTS=<list>;<status.host>`, so the PRM `resource` equals what users type on either hostname. When `PUBLIC_BASE_URL` was set explicitly (the custom hostname, section 16), it is kept as the canonical base and only `PUBLIC_HOSTS` gains the `status.url` host; on the first hostname deploy (2026-09-26) the older rule replaced it with the legacy `a.run.app` URL, fixed the same day.
 5. Prints the MCP endpoint (`<url>/mcp`, what users paste, no trailing slash), `/xray`, `/health`, the Origin policy and the image.
 6. Image tag rule (invariant 12): `git rev-parse --short=12 HEAD`; a dirty tree gets `<sha>-dirty-<utc-timestamp>`; in a tree without git history the script warns and uses `ts-<utc-timestamp>`; `IMAGE_TAG` overrides all three.
@@ -112,7 +112,7 @@ ORIGIN_POLICY=log-only  SKIP_BUILD=1 IMAGE_TAG=<current-tag> ./infra/deploy.sh  
 
 ## 9. Tune the caps
 
-Every cap and rate limit is an env var (section 11; invariant 14), but `deploy.sh` forwards only the eight variables of section 3, so in the cloud every other knob runs at its code default. To change one: `gcloud run services update mcp-bank --project=lake-fraude --region=us-central1 --update-env-vars=RATE_LIMIT_IP_REGISTER=200` (a new revision, so a restart). The next `deploy.sh` uses `--set-env-vars`, which replaces the whole set and reverts it; a knob that must persist needs a line in `deploy.sh` (block `infra`). Raise one knob at a time on a public 1 GiB singleton, watch `/health` and the Cloud Run memory metric, re-run `smoke.sh`. Never change `--min-instances`, `--max-instances`, `--no-cpu-throttling` or `--timeout` this way, and never add `--use-http2`.
+Every cap and rate limit is an env var (section 11; invariant 14), but `deploy.sh` forwards only the nine variables of section 3, so in the cloud every other knob runs at its code default. To change one: `gcloud run services update mcp-bank --project=lake-fraude --region=us-central1 --update-env-vars=RATE_LIMIT_IP_REGISTER=200` (a new revision, so a restart). The next `deploy.sh` uses `--set-env-vars`, which replaces the whole set and reverts it; a knob that must persist needs a line in `deploy.sh` (block `infra`). Raise one knob at a time on a public 1 GiB singleton, watch `/health` and the Cloud Run memory metric, re-run `smoke.sh`. Never change `--min-instances`, `--max-instances`, `--no-cpu-throttling` or `--timeout` this way, and never add `--use-http2`.
 
 | Symptom | Knob | Default | Direction |
 |---|---|---|---|
@@ -151,7 +151,7 @@ A claude.ai failure id starts with `ofid_` (in the error toast URL). Record ever
 
 ## 11. Environment
 
-Parsed once in `src/config/index.ts` (zod; one `ConfigError` lists every problem); `.env.example` carries exactly the same 42 names and a test asserts the parity. Defaults below are the code's; `.env.example` differs only where noted. `*` = set by `deploy.sh`; `(secret)` = injected by `--set-secrets`; `PORT` is injected by Cloud Run.
+Parsed once in `src/config/index.ts` (zod; one `ConfigError` lists every problem); `.env.example` carries exactly the same 51 names and a test asserts the parity. Defaults below are the code's; `.env.example` differs only where noted. `*` = set by `deploy.sh`; `(secret)` = injected by `--set-secrets`; `PORT` is injected by Cloud Run.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -177,6 +177,13 @@ Parsed once in `src/config/index.ts` (zod; one `ConfigError` lists every problem
 | `AUTH_DB_PATH` * | `/tmp/auth.sqlite` | SQLite file for the DCR client table |
 | `MAX_DCR_CLIENTS` | `1000` | bounded LRU of registered OAuth clients |
 | `CIMD_ENABLED` | `false` | reserved for `client_id_metadata_document_supported`; parsed but read by no block yet (A-37) |
+| `BOT_AUTH_VERIFY` | `true` | verify Web Bot Auth signatures (RFC 9421, Ed25519) against the agent's key directory; the verdict goes on `http.request.signature` and never changes an answer (D-29) |
+| `BOT_AUTH_CHALLENGE` * | `off` (`deploy.sh`: `advertise`) | `advertise` adds `Accept-Signature` to every `/mcp` and `/public/mcp` response, inviting a client to sign (D-29) |
+| `BOT_AUTH_DIRECTORY_TTL_S` | `3600` | how long an agent's keys are cached when its directory sends no `Cache-Control: max-age` (clamped 60..86,400) |
+| `BOT_AUTH_FETCH_TIMEOUT_MS` | `3000` | timeout of one directory fetch; the signed request waits for it once per agent per TTL |
+| `BOT_AUTH_MAX_DIRECTORIES` | `100` | agents whose keys are cached at once (invariant 14) |
+| `BOT_AUTH_MAX_FETCHES_PER_HOUR` | `60` | directory fetches this process may make in an hour; past it the verdict is `directory_unreachable` and `auth.directory.fetched {rate_limited}` is recorded |
+| `BOT_AUTH_ALLOW_LOOPBACK` | `false` | development only: accept `http://` and loopback directories, for `scripts/demo-traffic.mjs`; refused when `NODE_ENV=production` |
 | `MAX_TABLES_PER_GRANT` | `10` | scratch tables one grant may hold |
 | `MAX_SCRATCH_DBS` | `200` | scratch `:memory:` databases before LRU eviction |
 | `MAX_QUERY_ROWS` | `100` | row cap on an `execute_query` result |

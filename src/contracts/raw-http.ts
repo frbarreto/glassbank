@@ -9,7 +9,7 @@
  *
  * Pure functions over a structural request type: no Express import, no I/O.
  */
-import type { RawHeader, RawHttpRequest } from './events.js';
+import type { RawHeader, RawHttpRequest, SignatureCheck } from './events.js';
 
 /**
  * Where `keepRawBody` leaves the bytes on the request. `Symbol.for`, so every copy agrees; not
@@ -98,4 +98,23 @@ export function markHttpObserved(response: LocalsCarrier): void {
 /** True when an endpoint already reports this response's `http.request`. */
 export function isHttpObserved(response: LocalsCarrier): boolean {
   return response.locals?.[HTTP_OBSERVED_LOCAL] === true;
+}
+
+/**
+ * v0.10 (D-29): where the Web Bot Auth check leaves its result on the request. `auth` verifies in
+ * a middleware mounted in front of every route and stores the check here; whoever emits
+ * `http.request` reads it with `signatureCheckOf`, so the verdict lands on the same record as the
+ * headers it was computed from. `Symbol.for`, like the raw body, so every copy agrees.
+ */
+const SIGNATURE_CHECK_KEY = Symbol.for('glassbank.signatureCheck');
+
+/** Stores the signature check of a request (`auth`'s Web Bot Auth middleware). */
+export function setSignatureCheck(request: object, check: SignatureCheck): void {
+  (request as Record<symbol, unknown>)[SIGNATURE_CHECK_KEY] = check;
+}
+
+/** The check `setSignatureCheck` stored, or `undefined` when nothing was signed or invited. */
+export function signatureCheckOf(request: object): SignatureCheck | undefined {
+  const value = (request as Record<symbol, unknown>)[SIGNATURE_CHECK_KEY];
+  return value !== null && typeof value === 'object' ? (value as SignatureCheck) : undefined;
 }

@@ -50,6 +50,12 @@ export function routes(base) {
     stream: `${base}/api/stream`,
     /** v0.8 (D-27): the log this viewer may read, as a JSONL download. */
     export: `${base}/api/export`,
+    /** v0.10 (D-32): the overview, counted by the server over the whole log of the scope. */
+    stats: `${base}/api/stats`,
+    /** v0.10 (D-31): the account view behind a session. */
+    sessionBankActivity: (xs) => `${base}/api/sessions/${encodeURIComponent(xs)}/bank/activity`,
+    /** The recorded account view `?fixture=1` shows (`test/fixtures/bank-activity.json`). */
+    fixtureActivity: `${base}/fixtures/bank-activity.json`,
   };
 }
 
@@ -119,6 +125,17 @@ export function createApi(
     },
     /** `XraySessionBankResponse`, or `{error, message}` (401, 403, 404 `not_found` / `no_persona`, 503 `unavailable`). */
     sessionBank: (xs) => request(read(route.sessionBank(xs))),
+    /** v0.10: `XrayBankActivityResponse` for the last `months` months, or `{error, message}` like `sessionBank`. */
+    sessionBankActivity: (xs, months = 3) =>
+      request(read(`${route.sessionBankActivity(xs)}?months=${encodeURIComponent(String(months))}`)),
+    /** v0.10: `XrayStatsResponse`; the scope follows the viewer (`all=1` for the admin reader). */
+    stats: (window = '24h', options = {}) => {
+      const params = new URLSearchParams({ window });
+      if (options.all) params.set('all', '1');
+      return request(read(`${route.stats}?${params}`));
+    },
+    /** The recorded account view of fixture mode, read like any other fixture file. */
+    fixtureActivity: () => request(route.fixtureActivity),
     /**
      * v0.4: erases every event of the viewer's login. `XrayDeleteResponse {deleted, sessions,
      * scope}` on success; `{error, message}` with 401 (no cookie) or 403 (observer mode, which is
@@ -146,6 +163,9 @@ export function createApi(
   };
 }
 
+/** The three top-level views (D-31): the chain of calls, the account, the overview. */
+export const PAGES = ['chain', 'account', 'overview'];
+
 /** Reads `?fixture=1` and the other query switches the dev loop uses. */
 export function readQuery(search) {
   const params = new URLSearchParams(String(search ?? ''));
@@ -158,5 +178,7 @@ export function readQuery(search) {
     all: params.get('all') === '1',
     /** `?lane=public`: watch the public lane, no pairing code needed (D-26). */
     lane: params.get('lane') === PUBLIC_LANE ? PUBLIC_LANE : null,
+    /** `?view=chain|account|overview`: which page opens first (D-31). */
+    page: PAGES.includes(params.get('view')) ? params.get('view') : null,
   };
 }

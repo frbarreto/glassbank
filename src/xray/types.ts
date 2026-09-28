@@ -5,7 +5,12 @@
  * root can pass its config straight through without this block importing it.
  */
 import type {
-  XrayBankSummary, JwtService, XrayPersonaSummary, ViewerKind } from '../contracts/index.js';
+  XrayBankActivity,
+  XrayBankSummary,
+  JwtService,
+  XrayPersonaSummary,
+  ViewerKind,
+} from '../contracts/index.js';
 
 export interface XrayConfig {
   /** Fallback base URL; also the base every pairing link is built from (A-36). */
@@ -51,6 +56,20 @@ export type BankSummaryLookup = (session: {
   readonly login_id: string | null;
   readonly grant_id: string | null;
 }) => Promise<XrayBankSummary | null>;
+
+/**
+ * v0.10 (D-31): the account view behind a session - spending, statement, cards, bills, transfers
+ * and audit - with the login's overlay applied. Injected by `app` from bank-core; `null` when the
+ * persona is unknown. Absent in a unit test, where the route answers 503.
+ */
+export type BankActivityLookup = (
+  session: {
+    readonly persona_id: string;
+    readonly login_id: string | null;
+    readonly grant_id: string | null;
+  },
+  options: { readonly months: number },
+) => Promise<XrayBankActivity | null>;
 
 /** Reported by `createXray().stats()`; the errors-and-health panel and the tests read it. */
 export interface XrayStats {

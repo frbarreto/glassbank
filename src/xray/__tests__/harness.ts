@@ -71,6 +71,7 @@ export interface HarnessOptions {
   readonly emitServerStarted?: boolean;
   readonly lookupPersona?: XrayDeps['lookupPersona'];
   readonly lookupBankSummary?: XrayDeps['lookupBankSummary'];
+  readonly lookupBankActivity?: XrayDeps['lookupBankActivity'];
   readonly pairFailuresPerMinute?: number;
   readonly maxStreamsPerLogin?: number;
   readonly maxStreams?: number;
@@ -111,6 +112,7 @@ export function createHarness(options: HarnessOptions = {}): Harness {
     now: options.now,
     lookupPersona: options.lookupPersona,
     lookupBankSummary: options.lookupBankSummary,
+    lookupBankActivity: options.lookupBankActivity,
     onError: (error, where) => errors.push({ error, where }),
     emitServerStarted: options.emitServerStarted ?? false,
     heartbeatMs: options.heartbeatMs ?? 0,

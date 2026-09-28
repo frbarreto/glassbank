@@ -25,7 +25,7 @@
       <div id="banner" class="banner-slot"></div>
       <div id="now" class="now-slot"></div>
 
-      <main class="layout">
+      <main class="layout" id="layout">
         <aside id="panel-sessions" class="panel panel-sessions" aria-label="Sessions"></aside>
 
         <section id="panel-timeline" class="panel panel-timeline" aria-label="Live timeline"></section>
@@ -41,6 +41,9 @@
           ></div>
         </section>
       </main>
+
+      <!-- The Account and the Overview (D-31): full width, drawn by panel-account.js / panel-overview.js. -->
+      <main id="page-wide" class="page-wide" hidden aria-live="polite"></main>
 
       <footer class="footer">
         <span>

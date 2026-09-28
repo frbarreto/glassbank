@@ -166,7 +166,7 @@ describe('the contracts barrel', () => {
     }
     // A frozen catalogue: the arrays are shared, so nobody may mutate them in place.
     expect(contracts.TOOL_CATALOG).toHaveLength(17);
-    expect(contracts.XRAY_EVENT_TYPES).toHaveLength(46);
+    expect(contracts.XRAY_EVENT_TYPES).toHaveLength(47);
   });
 
   it('keeps the ETL protocol strings exactly as Ramp writes them', () => {

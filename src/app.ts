@@ -46,6 +46,11 @@ export interface AppDeps {
    * of every route so no request escapes the record, discovery and OAuth included.
    */
   readonly httpObserver?: RequestHandler;
+  /**
+   * v0.10 (D-29): `Auth.botAuth.middleware`, mounted in front of every route so a Web Bot Auth
+   * signature is verified before the route that emits `http.request` runs. It never answers.
+   */
+  readonly botAuth?: RequestHandler;
 }
 
 /** What `/health` answers. Field names are snake_case because they are a wire contract. */
@@ -255,6 +260,10 @@ export function createApp(config: AppConfig, deps: AppDeps = {}): Express {
   // Before every route, `/health` and the landing page included: each request that reaches the
   // process is reported once, with its `raw` block (v0.9, D-28). It only listens; it never answers.
   if (deps.httpObserver) app.use(deps.httpObserver);
+
+  // The Web Bot Auth check, before any route: it leaves the verdict on the request for whoever
+  // emits `http.request`, and on the MCP endpoints it may add `Accept-Signature` (D-29).
+  if (deps.botAuth) app.use(deps.botAuth);
 
   // /health is the public name. On Cloud Run, Google's front end answers /healthz itself with a
   // 404 and never forwards it (observed on the first deploy, 2026-09-26); /healthz stays as an alias

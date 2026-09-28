@@ -1,6 +1,6 @@
 # xray
 
-Status: done; built by `src/composition.ts` (`createXray`), mounted at `/xray`, its `emitter` injected into every producer; contracts v0.9 (the public lane readable with `?lane=public`, D-26; the log downloadable as JSONL at `/xray/api/export`, D-27; the log stores what arrives and redacts on the way out, D-28).
+Status: done; built by `src/composition.ts` (`createXray`), mounted at `/xray`, its `emitter` injected into every producer; contracts v0.10 (the public lane readable with `?lane=public`, D-26; the log downloadable as JSONL at `/xray/api/export`, D-27; the log stores what arrives and redacts on the way out, D-28; v0.10, deployed 2026-09-27: the overview `GET /xray/api/stats` (D-32), the account view `GET /xray/api/sessions/:xs/bank/activity` (D-31), each session's `identity` (D-29)).
 
 ## Purpose
 The server half of the X-ray: the `XrayEmitter` every block writes to (it stores what it is given, D-28), the read-time redaction, the ring buffer and SQLite log, the SSE stream, the JSON read model, pairing codes and the viewer cookie.
@@ -13,17 +13,19 @@ Every path is wrapped: an X-ray failure degrades the dashboard, never a request.
 | `emitter.ts` | The pipeline: id and `seq`, a deep copy of the payload (`snapshot`), validate against the open schemas (defaults filled, nothing dropped; the lenient envelope as fallback), ring push, fan-out, SQLite write batched on `setImmediate`, then the byte cap (`maxLogBytes`); never throws, never redacts. |
 | `redaction.ts` | Read time only (D-28): `viewEvent` (the one exit of a stored event), the deny-list walker (ancestor-scoped cycle guard), the per-type rules, `redactRawRequest` (the `raw` block of `http.request`: credential headers and query parameters, IPs in forwarding headers, the JSON-RPC or form body), `applyObserverRedaction` (admin viewers). |
 | `ring.ts` | The last 10,000 events or 48 MB (`RING_BYTES_BUDGET`) in memory; O(1) push; replay source when the log is degraded. |
-| `log.ts` | SQLite WAL log at `XRAY_DB_PATH` (`auto_vacuum=INCREMENTAL`): replay, history, retention, `storedBytes()` and `trimToMaxBytes()` (whole events, oldest first, the newest always kept), `reclaim()`; becomes a null log after 5 consecutive failures. |
-| `read-model.ts` | Sessions, grants, logins and catalog snapshots (LRUs of 2,000 / 2,000 / 2,000 / 200); `matchesScope` is the visibility authority. |
+| `log.ts` | SQLite WAL log at `XRAY_DB_PATH` (`auto_vacuum=INCREMENTAL`): replay, history, retention, `storedBytes()` and `trimToMaxBytes()` (whole events, oldest first, the newest always kept), `reclaim()`, `readOverviewRows()` and `oldestTs()` for the overview; becomes a null log after 5 consecutive failures. |
+| `read-model.ts` | Sessions, grants, logins and catalog snapshots (LRUs of 2,000 / 2,000 / 2,000 / 200); `matchesScope` is the visibility authority. Each session row also folds its `identity` (D-29): the strongest signature verdict of its `http.request` events (`verdicts.ts`), the signed agent and key, counts of signed and verified requests, whether it was invited to sign, `clientInfo` name and version, the last `User-Agent`, Anthropic egress. |
+| `overview.ts` | `createOverview` (D-32): `stats(scope, window)` reads `OVERVIEW_TYPES` rows of the log since the window (`log.readOverviewRows`, a handful of fields through `json_extract`, never the raw bodies), keeps what `matchesScope` lets the scope read, and counts sessions, visitors (grants), calls, failures, denials, rate limits, durations, signed and verified requests, calls per tool, clients with their proof, calls per time bucket, the scalar arguments sent (through `redactEventData`, never the rationale, none for the admin reader) and the last errors. Stops at `MAX_SCAN` (200,000) and says `truncated`; cached 5 s per scope and window. |
+| `verdicts.ts` | `strongerVerdict`: the order in which one session's signature verdicts outrank each other; `unsigned` never replaces a verdict a signature earned. |
 | `sse.ts` | `openSseStream`: subscribe, flush, replay, drain - synchronous, so no gap and no duplicate; heartbeat; bounded per-subscriber queue. |
 | `routes.ts` | Every route below; JSON bodies capped at 32 kb; the stream budget shared by the SSE streams and the export; the export's paged JSONL writer (`EXPORT_PAGE_ROWS`). |
 | `pairing.ts` | `Pairing`: mints and exchanges `BANK-XXXX-XXXX-XX`; the admin-token exchange. |
 | `viewer.ts` | Issues and reads the viewer cookie; `resolveScope` turns cookie plus query into one `XrayViewerScope`; `wantsPublicLane` and `publicLaneViewer` (the cookie-less `public` reader, D-26). |
 | `rate-limit.ts`, `bounded.ts` | Fixed-window failure limiter and `BoundedLru`; own copies because blocks may not import each other. |
-| `types.ts` | `XrayConfig` (a structural subset of `AppConfig`), `XrayStats`, `PersonaLookup`, `ViewerIdentity`. |
+| `types.ts` | `XrayConfig` (a structural subset of `AppConfig`), `XrayStats`, `PersonaLookup`, `BankSummaryLookup`, `BankActivityLookup`, `ViewerIdentity`. |
 
 ## Public interface (`src/xray/index.ts`)
-- `createXray(deps: XrayDeps): Xray`. `XrayDeps`: `config` (`publicBaseUrl`, `xrayDbPath`, `xrayRetentionHours`, `xrayMaxLogRows`, `xrayMaxLogBytes?` (default `DEFAULT_MAX_LOG_BYTES`, 256 MiB), `xrayAdminToken`, `rateLimits.ipPairFailuresPerMin`, `xrayMaxStreamsPerLogin`, `xrayMaxStreams`, `xrayMaxPublicStreams`), `jwt` (`auth.jwt`), `bootId`; optional `version`, `gitSha`, `sdk`, `nodeVersion`, `now`, `lookupPersona`, `onError`, `emitServerStarted`, `heartbeatMs`, `retentionIntervalMs`, `installSignalHandlers`.
+- `createXray(deps: XrayDeps): Xray`. `XrayDeps`: `config` (`publicBaseUrl`, `xrayDbPath`, `xrayRetentionHours`, `xrayMaxLogRows`, `xrayMaxLogBytes?` (default `DEFAULT_MAX_LOG_BYTES`, 256 MiB), `xrayAdminToken`, `rateLimits.ipPairFailuresPerMin`, `xrayMaxStreamsPerLogin`, `xrayMaxStreams`, `xrayMaxPublicStreams`), `jwt` (`auth.jwt`), `bootId`; optional `version`, `gitSha`, `sdk`, `nodeVersion`, `now`, `lookupPersona`, `lookupBankSummary`, `lookupBankActivity` (v0.10), `onError`, `emitServerStarted`, `heartbeatMs`, `retentionIntervalMs`, `installSignalHandlers`.
 - `Xray`: `emitter`, `router`, `pairing`, `readModel`, `log`, `ring`, `stats()`, `flush()`, `runRetention()`, `shutdown(reason?)`.
 - Also exported: `RESTORE_WINDOW`, `RETENTION_INTERVAL_MS`, `DEFAULT_MAX_LOG_BYTES`, `viewEvent`, `applyObserverRedaction`, `redactEventData`, `ipPrefixOf`, `isAnthropicEgress`, `maskToLastFour`, `shortHash`; types `XrayConfig`, `XrayStats`, `PersonaLookup`, `ViewerIdentity`, `ReadModel`, `SessionRow`, `EventLog`.
 
@@ -39,6 +41,8 @@ Every path is wrapped: an X-ray failure degrades the dashboard, never a request.
 | `DELETE /xray/api/sessions/:xs` | pairing cookie | Erases one session from the log (`deleteMatching`), the ring (`remove`) and the read model (`forgetSession`); refuses observer mode with 403 (v0.4). |
 | `DELETE /xray/api/events` | pairing cookie | The same for the whole login (`forgetLogin`); both emit `xray.events.deleted` afterwards. |
 | `GET /xray/api/sessions/:xs/bank` | cookie | The persona card through the injected `lookupBankSummary` (v0.3): 404 `no_persona`, 503 `unavailable` without a bank; the read itself emits nothing. |
+| `GET /xray/api/sessions/:xs/bank/activity?months=` | cookie | v0.10 (D-31): the account view through the injected `lookupBankActivity` - balances, twelve months of money in and out, spending by category, the statement (500 newest lines of the window), cards with this month's spend, bills, transfers, the audit entries of the login's writes; `months` 1, 3, 6 or 12 (default 3). Same rule and errors as `bank`; the read emits nothing. |
+| `GET /xray/api/stats?window=` | cookie, or `?lane=public` | v0.10 (D-32): `XrayStatsResponse` for `1h`, `24h` (default), `7d` or `all`, counted over the log for the scope (`overview.ts`); `Cache-Control: no-store`. Same scope switches as `sessions`. |
 | `GET /xray/api/sessions/:xs/events?after=&limit=` | cookie | Flushes the queue first; `limit` default 200, max 500; every event through `viewEvent` (observer redaction for an admin cookie). |
 | `GET /xray/api/catalog?xs=` | cookie | The latest snapshot; 400 without `xs`, 404 without a snapshot. |
 | `GET /xray/api/stream` | cookie | SSE; `?xs=` / `?login=me` / `?all=1`. |
@@ -47,7 +51,7 @@ Every path is wrapped: an X-ray failure degrades the dashboard, never a request.
 
 Scope: a pairing cookie sees its own login only (`all=1` -> 403, another login's `xs` -> 403); an admin cookie sees everything (`login=me` -> 400).
 
-The public lane (v0.7, D-26): `?lane=public` on `me`, `sessions`, `sessions/:xs`, `sessions/:xs/events`, `sessions/:xs/bank`, `catalog` and `stream` needs no cookie and ignores one, so a browser can keep a paired tab beside a public one. The reader is `viewer_kind: 'public'` bound to `PUBLIC_LOGIN_ID`: it sees the anonymous visitors of `/public/mcp` and nothing else (another login's `xs` -> 403, `all=1` -> 403), both `DELETE` routes answer 403, and events come with the deny-list view but no observer masking, because every public tool told the agent its calls are shown publicly; `raw` shows no credential header and IPs as a prefix only. Its streams and exports count against `XRAY_MAX_PUBLIC_STREAMS` (16), inside `XRAY_MAX_STREAMS`. `me` answers `{viewer_kind: 'public', login_id: 'lgn_public', grant_ids, persona: null}`.
+The public lane (v0.7, D-26): `?lane=public` on `me`, `sessions`, `sessions/:xs`, `sessions/:xs/events`, `sessions/:xs/bank` (and `/bank/activity`, both 404 `no_persona`), `stats`, `catalog` and `stream` needs no cookie and ignores one, so a browser can keep a paired tab beside a public one. The reader is `viewer_kind: 'public'` bound to `PUBLIC_LOGIN_ID`: it sees the anonymous visitors of `/public/mcp` and nothing else (another login's `xs` -> 403, `all=1` -> 403), both `DELETE` routes answer 403, and events come with the deny-list view but no observer masking, because every public tool told the agent its calls are shown publicly; `raw` shows no credential header and IPs as a prefix only. Its streams and exports count against `XRAY_MAX_PUBLIC_STREAMS` (16), inside `XRAY_MAX_STREAMS`. `me` answers `{viewer_kind: 'public', login_id: 'lgn_public', grant_ids, persona: null}`.
 
 ## Consumes
 `src/contracts` (events, `xray-api`, `Pairing`, `JwtService`, `COOKIE_NAMES`, `TOKEN_LIFETIMES_SECONDS`, `getTool` for deny-lists), the injected `JwtService`, `lookupPersona` (`bankCore.personas.get`), `better-sqlite3`. Imports no other block.
@@ -78,7 +82,7 @@ The public lane (v0.7, D-26): `?lane=public` on `me`, `sessions`, `sessions/:xs`
 
 ## How to test
 ```
-npx vitest run src/xray               # 117 tests, 10 files: redaction, emitter, log, pairing, read-model, api, sse, public-lane, export, raw-ingest
+npx vitest run src/xray               # 125 tests, 11 files: redaction, emitter, log, pairing, read-model, api, sse, public-lane, export, raw-ingest, overview (scopes, windows, identity, the account route)
 npx eslint src/xray
 ```
 The tests build their own `JwtService` in `__tests__/harness.ts`; `test/import-boundaries.test.ts` forbids importing `src/auth` or `src/testing`.
@@ -98,4 +102,6 @@ The tests build their own `JwtService` in `__tests__/harness.ts`; `test/import-b
 - The admin export holds live credentials as they arrived (bearer tokens valid up to 1 h, refresh tokens, cookies) and full IP addresses: treat a downloaded file as a secret (D-28).
 - Redaction runs per viewer on every read, so a large `raw` body costs a walk each time it is shown; the stream renders an event once per viewer kind (a `WeakMap` cache), page reads walk again.
 - Past `XRAY_MAX_LOG_BYTES` the trim emits no event; the log just starts later (`stats()` shows rows and bytes).
+- The overview scans the log on every uncached request (5 s cache): fine for a demo's thousands of events, linear in the rows of the window past that; `MAX_SCAN` bounds it and says so. Its counts start where the log starts: a restart or the retention knobs erase what came before.
+- A request that reaches `/public/mcp` with no session yet (the SDK's `GET` probe, answered 405) carries no `xs`, so its signature verdict counts in the overview's totals but in no session's identity.
 - `session.ended` belongs to `mcp`; `server.stopping.sessions_ended` only counts this boot's sessions.

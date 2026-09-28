@@ -358,6 +358,7 @@ function renderEvent(model, event) {
       'div',
       { class: 'call-section' },
       jsonView(event, {
+          envelope: true,
         id: viewerId('envelope', event.id),
         state: view.json ?? {},
         title: 'Raw envelope',

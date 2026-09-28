@@ -48,6 +48,7 @@ export const DATA_KEYS = Object.freeze({
     'sse',
     'rate_limited',
     'raw',
+    'signature',
   ],
   'auth.challenge': ['status', 'error', 'scope', 'resource_metadata', 'reason'],
   'auth.verified': [
@@ -132,6 +133,16 @@ export const DATA_KEYS = Object.freeze({
     'expires_at',
     'persona_source',
     'shared_persona',
+  ],
+  'auth.directory.fetched': [
+    'agent',
+    'url',
+    'outcome',
+    'status',
+    'key_count',
+    'duration_ms',
+    'ttl_s',
+    'error',
   ],
   'session.started': ['reason', 'idle_ms'],
   'session.initialized': [

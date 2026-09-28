@@ -14,6 +14,8 @@ import type {
   XrayEmitter,
 } from '../contracts/index.js';
 
+import type { BotAuthConfig } from './bot-auth.js';
+
 /** The knobs of docs/DEPLOYMENT.md section 3 that this block reads. */
 export interface AuthRateLimitConfig {
   /** `RATE_LIMIT_IP_REGISTER`, per IP per hour. */
@@ -31,7 +33,7 @@ export interface AuthRateLimitConfig {
 }
 
 /** Exactly the configuration `createAuth` needs. A subset of `AppConfig`, by structural typing. */
-export interface AuthConfig extends PublicHostConfig {
+export interface AuthConfig extends PublicHostConfig, BotAuthConfig {
   readonly nodeEnv: 'development' | 'test' | 'production';
   /** HS256 key. Never logged, never echoed (CLAUDE.md invariant 7). */
   readonly oauthSigningKey: string;

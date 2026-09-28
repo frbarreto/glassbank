@@ -51,8 +51,10 @@ describe('the depth table', () => {
   it('answers every kind at every depth exactly as the level model states it', () => {
     expect(DEPTHS).toEqual(['overview', 'calls', 'open', 'inside']);
     const table = {
+      // C1: a session stays a block at every depth; its connection opens with "everything open".
+      sess: [true, true, true, true],
       ep: [false, true, true, true],
-      conn: [false, false, false, false],
+      conn: [false, false, true, true],
       call: [false, false, true, true],
       inside: [false, false, false, true],
       card: [false, false, false, true],

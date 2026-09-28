@@ -2,6 +2,19 @@
 
 Version log for `src/contracts` (`auth.ts`, `bank.ts`, `events.ts`, `scopes.ts`, `tools.ts`, `xray-api.ts`, `public.ts`, `raw-http.ts`, re-exported by `index.ts`), newest first. The contract is append-only: names are added, never renamed or removed in v1. Namespaces: `A-xx` assumption and `D-x` user decision (`docs/ASSUMPTIONS.md`), `ADR-x` architecture decision (`docs/ARCHITECTURE.md` section 9).
 
+## v0.10 - 2026-09-27 - who signed it, the overview and the account (deployed 2026-09-27)
+
+| Change | File | Producer / consumer |
+|---|---|---|
+| `BotAuthVerdictSchema` (`verified`, `invalid_signature`, `unknown_key`, `directory_unreachable`, `expired`, `not_yet_valid`, `replayed`, `malformed`, `unsupported`, `unsigned`, `not_checked`), `SignatureCheckSchema` and the optional `signature` on `HttpRequestData` | `events.ts` | `auth` verifies (`bot-auth.ts`), `mcp` puts the check on every `http.request` it emits; `xray` folds it into the session identity; the dashboard draws it |
+| `auth.directory.fetched` event `{agent, url, outcome, status, key_count, duration_ms, ttl_s, error}` (the catalogue is now 47 types) | `events.ts` | `auth`, on every key-directory fetch; the dashboard labels it |
+| `setSignatureCheck`, `signatureCheckOf` | `raw-http.ts` | `auth` stores the check on the request in a middleware mounted before every route; `mcp` reads it when it builds `http.request` |
+| `XraySessionIdentity` and the optional `identity` on `XraySessionSummary` | `xray-api.ts` | the read model; the session head, the Sessions rail and the Overview |
+| `XRAY_ROUTES.stats = '/xray/api/stats'`, `XRAY_STATS_WINDOWS`, `XrayStatsQuery`, `XrayStatsResponse` and its row types | `xray-api.ts` | `xray` (`overview.ts`, over the SQLite log with `json_extract`); `public/panel-overview.js` |
+| `XRAY_ROUTES.sessionBankActivity = '/xray/api/sessions/:xs/bank/activity'`, `XRAY_ACTIVITY_MONTHS`, `XrayActivityQuery`, `XrayBankActivity`, `XrayBankActivityResponse` and its row types | `xray-api.ts` | `app` builds `lookupBankActivity` (`buildBankActivity`, silent reads on the login's overlay) and injects it into `xray`; `public/panel-account.js` |
+
+Why: D-29 to D-32. The dashboard could only say which provider a session *claimed* to be (`clientInfo`, `User-Agent`); a Web Bot Auth signature verified against the agent's published key says who it *is*, so the server now verifies every signature that arrives and, with `BOT_AUTH_CHALLENGE=advertise`, invites one with `Accept-Signature` - and never answers differently because of it. The page held at most three sessions, so "what is going on overall" is counted by the server; and a signed-in viewer can see the persona's money the way a bank app shows it. Additive: no name renamed or removed.
+
 ## v0.9 - 2026-09-27 - the raw record
 
 | Change | File | Producer / consumer |

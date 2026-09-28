@@ -131,6 +131,7 @@ export const TYPE_LABELS = {
   'auth.token.revoked': 'Token revoked',
   'auth.stepup.requested': 'Step-up requested',
   'auth.login.created': 'Login created',
+  'auth.directory.fetched': 'Key directory fetched',
   'session.started': 'Session started',
   'session.initialized': 'initialize',
   'session.ended': 'Session ended',
@@ -300,6 +301,12 @@ export function summaryOf(event) {
       return `${data.tool ?? 'a tool'} needs ${joinList(data.missing_scopes)} · answered ${
         data.status ?? 403
       } insufficient_scope`;
+    case 'auth.directory.fetched':
+      return `${data.agent ?? 'an agent'} · ${
+        data.outcome === 'ok'
+          ? `${count(data.key_count ?? 0)} Ed25519 key${data.key_count === 1 ? '' : 's'}, cached ${data.ttl_s ?? '?'} s`
+          : `${String(data.outcome ?? 'failed').replace(/_/g, ' ')}${data.error ? `: ${data.error}` : ''}`
+      }`;
     case 'auth.login.created':
       return `Persona ${data.persona_id ?? '-'} · ${data.persona_source ?? 'seeded'}${
         data.shared_persona ? ' · shared demo persona' : ''

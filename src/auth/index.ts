@@ -18,6 +18,7 @@ import { refreshLifetimeSeconds, type PersonaDirectory, type VerifyAccessToken }
 
 import { createClientPersistence } from './client-db.js';
 import { createClientStore, type ClientStore } from './clients.js';
+import { createBotAuth, type BotAuth } from './bot-auth.js';
 import { safeEmitter } from './events.js';
 import { createJwtService } from './jwt.js';
 import { createSpikePersonaDirectory } from './personas.js';
@@ -61,6 +62,12 @@ export interface Auth {
    */
   readonly newId: (prefix: string) => string;
   readonly clients: ClientStore;
+  /**
+   * v0.10 (D-29): the Web Bot Auth check. `src/app.ts` mounts `botAuth.middleware` in front of
+   * every route; it verifies a signature when one arrives, invites one on the MCP endpoints when
+   * `BOT_AUTH_CHALLENGE=advertise`, and never changes an answer.
+   */
+  readonly botAuth: BotAuth;
   /**
    * Releases the `AUTH_DB_PATH` handle. `src/server.ts` calls it from the SIGTERM path; it is
    * synchronous and safe to call twice.
@@ -192,6 +199,7 @@ export function createAuth(deps: AuthDeps): Auth {
     },
     newId: runtime.newId,
     clients,
+    botAuth: createBotAuth({ config, emitter, now }),
     close: () => clients.close(),
   };
 }
@@ -200,4 +208,13 @@ export { createSpikePersonaDirectory, SEEDED_PERSONAS } from './personas.js';
 export { pkceChallengeFor } from './routes.js';
 export { createClientPersistence, createNullClientPersistence } from './client-db.js';
 export type { ClientPersistence } from './client-db.js';
+export {
+  ACCEPT_SIGNATURE_VALUE,
+  DIRECTORY_PATH,
+  createBotAuth,
+  jwkThumbprint,
+  signatureBase,
+  verdictRank,
+} from './bot-auth.js';
+export type { BotAuth, BotAuthConfig, DirectoryFetcher } from './bot-auth.js';
 export type { AuthConfig, AuthDeps, AuthRateLimitConfig, GrantRecord, SpikeLogger, SpikeLogRecord } from './types.js';

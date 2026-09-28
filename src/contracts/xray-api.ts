@@ -9,6 +9,7 @@
  */
 import type {
   AuthLevel,
+  BotAuthVerdict,
   CatalogTool,
   ClientInfo,
   ToolAvailability,
@@ -17,7 +18,16 @@ import type {
   XrayEra,
   XrayEvent,
 } from './events.js';
-import type { AccountStatus, AccountType, PersonaKind } from './bank.js';
+import type {
+  AccountStatus,
+  AccountType,
+  BillStatus,
+  CardStatus,
+  PersonaKind,
+  TransferDirection,
+  TransferRail,
+  TransferStatus,
+} from './bank.js';
 import type { Scope } from './scopes.js';
 
 // ---------------------------------------------------------------------------
@@ -57,6 +67,18 @@ export const XRAY_ROUTES = {
    * cookie so one `curl` is enough (`XrayExportQuery`).
    */
   export: '/xray/api/export',
+  /**
+   * v0.10 (D-32): `GET` answers `XrayStatsResponse`, the overview of everything the scope may read
+   * (`XrayStatsQuery`), computed by the server over its log because the page only ever holds a
+   * few sessions of it.
+   */
+  stats: '/xray/api/stats',
+  /**
+   * v0.10 (D-31): `GET` answers `XrayBankActivityResponse`, the persona's money as the bank sees
+   * it now - spending by category and by month, the statement, cards, bills, transfers and the
+   * audit entries the agent's writes left. Same visibility rule as `sessionBank`.
+   */
+  sessionBankActivity: '/xray/api/sessions/:xs/bank/activity',
 } as const;
 
 /**
@@ -169,6 +191,35 @@ export interface XraySessionSummary {
   readonly token_expires_at: string | null;
   /** Changes across a restart, so the dashboard can draw a restart marker (A-15). */
   readonly boot_id: string | null;
+  /** v0.10 (D-29): who is on the other end, as far as this server can tell. */
+  readonly identity?: XraySessionIdentity;
+}
+
+/**
+ * v0.10 (D-29): the three answers to "which AI provider is this", kept apart because only the
+ * first is evidence. `signed_agent` with `signature_verdict: 'verified'` means a Web Bot Auth
+ * signature on one of this session's requests checked out against the key that agent publishes;
+ * `client_name` (`clientInfo`) and `user_agent` are whatever the client chose to send. Computed by
+ * the read model from the session's `http.request` and `session.initialized` events.
+ */
+export interface XraySessionIdentity {
+  /** The strongest verdict any request of the session earned, `null` when none was signed. */
+  readonly signature_verdict: BotAuthVerdict | null;
+  /** `Signature-Agent` of that request (the URI as sent); a name only `verified` vouches for. */
+  readonly signed_agent: string | null;
+  readonly keyid: string | null;
+  /** Requests of the session that carried a signature, and how many of them verified. */
+  readonly signed_requests: number;
+  readonly verified_requests: number;
+  /** True once this server invited the client to sign (`Accept-Signature`, D-29). */
+  readonly challenged: boolean;
+  /** `clientInfo.name` and `version`, verbatim and untrusted (A-28). */
+  readonly client_name: string | null;
+  readonly client_version: string | null;
+  /** The last `User-Agent` of the session's requests, verbatim and untrusted. */
+  readonly user_agent: string | null;
+  /** True when a request came from Anthropic's documented egress range. */
+  readonly anthropic_egress: boolean;
 }
 
 /** `GET /xray/api/sessions`; Ramp's `{data, page: {next}}` envelope. */
@@ -378,4 +429,238 @@ export interface HealthzResponse {
   readonly version: string;
   readonly origin_policy: string;
   readonly uptime_s: number;
+}
+
+// ---------------------------------------------------------------------------
+// The overview (v0.10, D-32): GET /xray/api/stats
+// ---------------------------------------------------------------------------
+
+/** How far back the overview looks. */
+export const XRAY_STATS_WINDOWS = ['1h', '24h', '7d', 'all'] as const;
+export type XrayStatsWindow = (typeof XRAY_STATS_WINDOWS)[number];
+
+/**
+ * `GET /xray/api/stats?window=24h` with the scope of `XrayStreamQuery`: `lane=public` (no cookie),
+ * `login=me` (the default for a pairing cookie), `xs`, or `all=1` (admin).
+ */
+export interface XrayStatsQuery extends XrayStreamQuery {
+  readonly window?: XrayStatsWindow;
+}
+
+/** The headline numbers of the overview. */
+export interface XrayStatsTotals {
+  readonly sessions: number;
+  /** Distinct grants: on the public lane one pseudo grant per visitor (IP prefix and User-Agent). */
+  readonly visitors: number;
+  readonly calls: number;
+  readonly calls_ok: number;
+  readonly calls_failed: number;
+  readonly calls_denied: number;
+  readonly rate_limited: number;
+  readonly protocol_errors: number;
+  readonly http_requests: number;
+  readonly signed_requests: number;
+  readonly verified_requests: number;
+  readonly calls_without_rationale: number;
+  readonly p50_ms: number | null;
+  readonly p95_ms: number | null;
+}
+
+export interface XrayStatsTool {
+  readonly tool: string;
+  readonly calls: number;
+  readonly failed: number;
+  readonly p50_ms: number | null;
+  readonly p95_ms: number | null;
+}
+
+/** One client as it presented itself, with what the signature check made of it. */
+export interface XrayStatsClient {
+  /** `clientInfo.name version`, else the `User-Agent`, else `unknown`. Untrusted (A-28). */
+  readonly label: string;
+  readonly user_agent: string | null;
+  /** The strongest verdict any of its requests earned; `null` when none was signed. */
+  readonly signature_verdict: BotAuthVerdict | null;
+  readonly signed_agent: string | null;
+  readonly sessions: number;
+  readonly calls: number;
+}
+
+export interface XrayStatsBucket {
+  /** Start of the bucket (ISO 8601). */
+  readonly start: string;
+  readonly calls: number;
+  readonly failed: number;
+}
+
+/** A scalar argument value the model sent, how often, for which tool. Never the rationale. */
+export interface XrayStatsArgument {
+  readonly tool: string;
+  readonly key: string;
+  readonly value: string;
+  readonly count: number;
+}
+
+export interface XrayStatsError {
+  readonly ts: string;
+  readonly xs: string | null;
+  readonly request_id: string | null;
+  readonly tool: string | null;
+  readonly kind: 'tool_error' | 'denied' | 'protocol_error' | 'rate_limited';
+  readonly message: string;
+}
+
+/**
+ * `GET /xray/api/stats`. Computed by the server from its event log for the scope, so it covers
+ * every session the viewer may read, not the few the page holds. Honest about its reach:
+ * `covers_from` is the oldest event the log still has for the scope, and the log itself is
+ * bounded by `XRAY_RETENTION_HOURS`, `XRAY_MAX_LOG_ROWS`, `XRAY_MAX_LOG_BYTES` and every restart.
+ */
+export interface XrayStatsResponse {
+  readonly viewer_kind: ViewerKind;
+  readonly window: XrayStatsWindow;
+  readonly as_of: string;
+  /** Start of the window; `null` for `all`. */
+  readonly since: string | null;
+  readonly covers_from: string | null;
+  readonly boot_id: string | null;
+  readonly retention_hours: number;
+  /** Events read to build this answer, and whether the scan stopped at its cap. */
+  readonly scanned: number;
+  readonly truncated: boolean;
+  readonly bucket_minutes: number;
+  readonly totals: XrayStatsTotals;
+  readonly by_tool: readonly XrayStatsTool[];
+  readonly by_client: readonly XrayStatsClient[];
+  readonly by_time: readonly XrayStatsBucket[];
+  /** Empty for the admin reader, whose view of arguments is observer-redacted (D-5). */
+  readonly top_arguments: readonly XrayStatsArgument[];
+  readonly recent_errors: readonly XrayStatsError[];
+}
+
+// ---------------------------------------------------------------------------
+// The account (v0.10, D-31): GET /xray/api/sessions/:xs/bank/activity
+// ---------------------------------------------------------------------------
+
+/** `?months=` of the activity route: how far back the statement and the categories reach. */
+export const XRAY_ACTIVITY_MONTHS = [1, 3, 6, 12] as const;
+
+export interface XrayActivityQuery {
+  readonly months?: number;
+  readonly lane?: 'public';
+}
+
+export interface XrayActivityMonth {
+  /** `YYYY-MM`. */
+  readonly month: string;
+  readonly money_in_cents: number;
+  /** Positive: what left the deposit and card accounts that month. */
+  readonly money_out_cents: number;
+  readonly lines: number;
+}
+
+export interface XrayActivityCategory {
+  readonly category_id: string | null;
+  readonly name: string;
+  /** Positive: card and account spending in the window, refunds netted out. */
+  readonly spent_cents: number;
+  readonly count: number;
+}
+
+/** One statement line (`load_statement_lines`), with the names a reader needs. */
+export interface XrayActivityLine {
+  readonly id: string;
+  readonly source: 'transaction' | 'transfer' | 'bill';
+  readonly date: string;
+  readonly account_id: string;
+  readonly account_name: string | null;
+  readonly description: string;
+  readonly counterparty: string;
+  /** Signed: negative is money out. */
+  readonly amount_cents: number;
+  readonly status: string;
+  readonly category_id: string | null;
+  readonly category_name: string | null;
+}
+
+export interface XrayActivityCard {
+  readonly id: string;
+  readonly account_id: string;
+  readonly cardholder_name: string;
+  readonly brand: string;
+  readonly last4: string;
+  readonly status: CardStatus;
+  readonly spending_limit_cents: number;
+  /** Card spending this calendar month, for the limit bar. */
+  readonly spent_this_month_cents: number;
+  readonly expires_on: string;
+}
+
+export interface XrayActivityBill {
+  readonly id: string;
+  readonly payee_name: string;
+  readonly account_id: string;
+  readonly amount_cents: number;
+  readonly due_date: string;
+  readonly status: BillStatus;
+  readonly paid_at: string | null;
+}
+
+export interface XrayActivityTransfer {
+  readonly id: string;
+  readonly direction: TransferDirection;
+  readonly rail: TransferRail;
+  readonly from_account_id: string;
+  readonly counterparty: string;
+  readonly amount_cents: number;
+  readonly fee_cents: number;
+  readonly status: TransferStatus;
+  readonly memo: string | null;
+  readonly scheduled_for: string;
+  readonly created_at: string;
+  readonly audit_id: string | null;
+}
+
+/** One write the login's overlay holds, with the model's rationale (ADR-15). */
+export interface XrayActivityAudit {
+  readonly id: string;
+  readonly action: string;
+  readonly target_type: string;
+  readonly target_id: string;
+  readonly summary: string;
+  readonly rationale: string | null;
+  readonly grant_id: string | null;
+  readonly created_at: string;
+}
+
+/**
+ * The account view (`GET /xray/api/sessions/:xs/bank/activity?months=3`): the persona behind a session, read
+ * through the login's overlay like the tools read it (ADR-15), so a card the agent locked shows
+ * locked and a transfer it confirmed is in the list. Read-only: writes stay with the model and its
+ * tools (D-3). Silent: the read emits no `bank.op`, because the model did not cause it.
+ */
+export interface XrayBankActivity extends XrayBankSummary {
+  readonly months: number;
+  /** The window of `lines`, `by_category` and `transfers` (`YYYY-MM-DD`, inclusive). */
+  readonly from_date: string;
+  readonly to_date: string;
+  readonly month_to_date: { readonly money_in_cents: number; readonly money_out_cents: number };
+  /** Always the last twelve months, oldest first. */
+  readonly by_month: readonly XrayActivityMonth[];
+  readonly by_category: readonly XrayActivityCategory[];
+  /** Newest first, at most `lines_cap`; `lines_total` counts the whole window. */
+  readonly lines: readonly XrayActivityLine[];
+  readonly lines_total: number;
+  readonly lines_cap: number;
+  readonly card_list: readonly XrayActivityCard[];
+  readonly bills: readonly XrayActivityBill[];
+  readonly transfers: readonly XrayActivityTransfer[];
+  /** Newest first: every write this login made on the persona, with the rationale it carried. */
+  readonly audit: readonly XrayActivityAudit[];
+}
+
+/** `GET /xray/api/sessions/:xs/bank/activity`. Same visibility rule as `sessionBank`. */
+export interface XrayBankActivityResponse extends XrayBankActivity {
+  readonly xs: string;
+  readonly login_id: string | null;
 }

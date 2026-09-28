@@ -22,15 +22,22 @@ import type { Pairing, XrayEmitter } from '../contracts/index.js';
 
 import { createPipeline, type Pipeline } from './emitter.js';
 import { createEventLog, type EventLog } from './log.js';
+import { createOverview } from './overview.js';
 import { createPairing, type XrayPairing } from './pairing.js';
 import { createReadModel, type ReadModel } from './read-model.js';
 import { createRing, type Ring } from './ring.js';
 import { buildXrayRouter } from './routes.js';
 import type { SseStream } from './sse.js';
-import type { BankSummaryLookup, PersonaLookup, XrayConfig, XrayStats } from './types.js';
+import type {
+  BankActivityLookup,
+  BankSummaryLookup,
+  PersonaLookup,
+  XrayConfig,
+  XrayStats,
+} from './types.js';
 import type { JwtService } from '../contracts/index.js';
 
-export type { BankSummaryLookup, XrayConfig, XrayStats, PersonaLookup, ViewerIdentity } from './types.js';
+export type { BankActivityLookup, BankSummaryLookup, XrayConfig, XrayStats, PersonaLookup, ViewerIdentity } from './types.js';
 export type { ReadModel, SessionRow } from './read-model.js';
 export type { EventLog } from './log.js';
 export {
@@ -65,6 +72,8 @@ export interface XrayDeps {
   readonly lookupPersona?: PersonaLookup;
   /** The persona card (`GET /xray/api/sessions/:xs/bank`); absent in a unit test (503). */
   readonly lookupBankSummary?: BankSummaryLookup;
+  /** v0.10: the account view (`GET /xray/api/sessions/:xs/bank/activity`); absent in a unit test (503). */
+  readonly lookupBankActivity?: BankActivityLookup;
   /** Where a swallowed X-ray failure goes. Never on the producer's path. */
   readonly onError?: (error: unknown, where: string) => void;
   /** Off in a test that asserts on the first event it emits itself. */
@@ -167,6 +176,15 @@ export function createXray(deps: XrayDeps): Xray {
     now,
     lookupPersona: deps.lookupPersona,
     lookupBankSummary: deps.lookupBankSummary,
+    lookupBankActivity: deps.lookupBankActivity,
+    overview: createOverview({
+      log,
+      ring,
+      readModel,
+      now,
+      retentionHours: config.xrayRetentionHours,
+      flush: () => pipeline.flush(),
+    }),
     heartbeatMs: deps.heartbeatMs,
     onError,
     streams,

@@ -42,6 +42,9 @@ import {
   type ToolLimits,
   type ToolRegistry,
   type ToolResult,
+  type XrayActivityCategory,
+  type XrayActivityMonth,
+  type XrayBankActivity,
   type XrayCorrelation,
   type XrayBankCardCounts,
   type XrayBankSummary,
@@ -276,6 +279,24 @@ export function createGlassBank(config: AppConfig, options: GlassBankOptions = {
     });
   }
 
+  /**
+   * The account view behind a session (`GET /xray/api/sessions/:xs/bank/activity`, v0.10, D-31):
+   * what `load_statement_lines`, `load_cards`, `load_bills`, `load_transfers` and the audit trail
+   * would give the model, on the same overlay, summed for a reader. Read silently like the persona
+   * card, so opening the page never shows up as a `bank.op` the model did not cause.
+   */
+  async function lookupBankActivity(
+    session: { readonly persona_id: string; readonly login_id: string | null; readonly grant_id: string | null },
+    options: { readonly months: number },
+  ): Promise<XrayBankActivity | null> {
+    const summary = await lookupBankSummary(session);
+    if (summary === null) return null;
+    const loginKey =
+      session.login_id ?? overlayLoginKeyOf({ login_id: null, grant_id: session.grant_id ?? '' });
+    const scope: BankScope = { persona_id: summary.persona.id, login_id: loginKey, grant_id: session.grant_id };
+    return silentReads.run(true, () => buildBankActivity(bankCore, scope, summary, options.months, new Date()));
+  }
+
   // 3. xray: needs `auth.jwt` for the viewer cookie, so `jose` stays inside its two owning blocks.
   xray = createXray({
     config,
@@ -287,6 +308,7 @@ export function createGlassBank(config: AppConfig, options: GlassBankOptions = {
     nodeVersion: process.version,
     lookupPersona: (personaId) => bankCore.personas.get(personaId),
     lookupBankSummary,
+    lookupBankActivity,
     ...(quiet ? { onError: () => undefined } : {}),
   });
 
@@ -412,6 +434,7 @@ export function createGlassBank(config: AppConfig, options: GlassBankOptions = {
     mcpRouter: mcp,
     ...(mcp.publicLane === null ? {} : { publicMcpRouter: mcp.publicLane }),
     httpObserver: mcp.httpObserver,
+    botAuth: auth.botAuth.middleware,
     xrayRouter: xray.router,
     dashboardRoot: options.dashboardRoot ?? dashboardRootFor(import.meta.url),
   });
@@ -439,5 +462,209 @@ export function createGlassBank(config: AppConfig, options: GlassBankOptions = {
       await etl.shutdown();
       auth.close();
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The account view (v0.10, D-31)
+// ---------------------------------------------------------------------------
+
+/** Statement lines kept in the answer; the sums cover the whole window. */
+export const ACTIVITY_LINES_CAP = 500;
+/** Pages of 500 read per list, a guard against a runaway cursor, not a real limit. */
+const ACTIVITY_MAX_PAGES = 40;
+
+async function readAll<T>(
+  read: (cursor: string | null) => Promise<{ readonly data: readonly T[]; readonly page: { readonly next: string | null } }>,
+): Promise<T[]> {
+  const rows: T[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < ACTIVITY_MAX_PAGES; page += 1) {
+    const result = await read(cursor);
+    rows.push(...result.data);
+    cursor = result.page.next;
+    if (cursor === null) break;
+  }
+  return rows;
+}
+
+function isoDay(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+/** The first day of the month `monthsBack` months before `date`, in UTC. */
+function monthStart(date: Date, monthsBack: number): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() - monthsBack, 1));
+}
+
+/**
+ * Sums the persona's money for the account view. Pure over `BankCore` reads; the caller holds the
+ * silent scope. Internal transfers between the persona's own accounts are left out of money in
+ * and out (they move money, they do not spend it); declined transactions, failed transfers and
+ * unpaid bills are left out too, because no money moved.
+ */
+export async function buildBankActivity(
+  bank: BankCoreHandle,
+  scope: BankScope,
+  summary: XrayBankSummary,
+  requestedMonths: number,
+  now: Date,
+): Promise<XrayBankActivity> {
+  const months = [1, 3, 6, 12].includes(requestedMonths) ? requestedMonths : 3;
+  const today = isoDay(now);
+  const yearStart = isoDay(monthStart(now, 11));
+  const windowStart = isoDay(monthStart(now, months - 1));
+  const thisMonth = today.slice(0, 7);
+
+  const [lines, transfers, bills, cards, audit, categories, monthTransactions, payees] = await Promise.all([
+    readAll((cursor) =>
+      bank.listStatementLines(scope, { from_date: yearStart, to_date: today, limit: 500, cursor }),
+    ),
+    readAll((cursor) => bank.listTransfers(scope, { from_date: yearStart, to_date: today, limit: 500, cursor })),
+    readAll((cursor) =>
+      bank.listBills(scope, { from_date: isoDay(monthStart(now, 2)), to_date: isoDay(monthStart(now, -2)), limit: 500, cursor }),
+    ),
+    readAll((cursor) => bank.listCards(scope, { limit: 100, cursor })),
+    readAll((cursor) => bank.listAuditEntries(scope, { limit: 500, cursor })),
+    bank.listCategories(),
+    readAll((cursor) =>
+      bank.listTransactions(scope, { from_date: `${thisMonth}-01`, to_date: today, limit: 500, cursor }),
+    ),
+    readAll((cursor) => bank.listPayees(scope, { limit: 500, cursor })),
+  ]);
+
+  const accountNames = new Map(summary.accounts.map((account) => [account.account_id, account.name]));
+  const lineById = new Map(lines.map((line) => [line.id, line]));
+  const payeeNames = new Map(payees.map((payee) => [payee.id, payee.name]));
+  const categoryNames = new Map(categories.map((category) => [category.id, category.name]));
+  const internal = new Set(transfers.filter((transfer) => transfer.to_account_id !== null).map((t) => t.id));
+
+  /** True when the line moved money out of or into the persona, as opposed to between its accounts. */
+  const moved = (line: (typeof lines)[number]): boolean => {
+    if (line.source === 'transaction') return line.status !== 'declined';
+    if (line.source === 'transfer') return line.status === 'completed' && !internal.has(line.id);
+    return line.status === 'paid';
+  };
+
+  const byMonth = new Map<string, { money_in_cents: number; money_out_cents: number; lines: number }>();
+  for (let back = 11; back >= 0; back -= 1) {
+    byMonth.set(isoDay(monthStart(now, back)).slice(0, 7), { money_in_cents: 0, money_out_cents: 0, lines: 0 });
+  }
+  const byCategory = new Map<string, { spent: number; count: number }>();
+  let windowTotal = 0;
+  for (const line of lines) {
+    const bucket = byMonth.get(line.date.slice(0, 7));
+    if (bucket && moved(line)) {
+      if (line.amount_cents >= 0) bucket.money_in_cents += line.amount_cents;
+      else bucket.money_out_cents += -line.amount_cents;
+      bucket.lines += 1;
+    }
+    if (line.date >= windowStart) {
+      windowTotal += 1;
+      if (line.source === 'transaction' && line.status !== 'declined') {
+        const key = line.category_id ?? '';
+        const entry = byCategory.get(key) ?? { spent: 0, count: 0 };
+        entry.spent += -line.amount_cents;
+        entry.count += 1;
+        byCategory.set(key, entry);
+      }
+    }
+  }
+
+  const cardSpend = new Map<string, number>();
+  for (const transaction of monthTransactions) {
+    if (transaction.card_id === null || transaction.status === 'declined' || transaction.amount_cents >= 0) continue;
+    cardSpend.set(transaction.card_id, (cardSpend.get(transaction.card_id) ?? 0) - transaction.amount_cents);
+  }
+
+  const byMonthList: XrayActivityMonth[] = [...byMonth.entries()].map(([month, entry]) => ({ month, ...entry }));
+  const current = byMonth.get(thisMonth) ?? { money_in_cents: 0, money_out_cents: 0 };
+  const byCategoryList: XrayActivityCategory[] = [...byCategory.entries()]
+    .filter(([, entry]) => entry.spent > 0)
+    .map(([id, entry]) => ({
+      category_id: id === '' ? null : id,
+      name: id === '' ? 'Uncategorised' : (categoryNames.get(id) ?? `Category ${id}`),
+      spent_cents: entry.spent,
+      count: entry.count,
+    }))
+    .sort((left, right) => right.spent_cents - left.spent_cents);
+
+  return {
+    ...summary,
+    months,
+    from_date: windowStart,
+    to_date: today,
+    month_to_date: { money_in_cents: current.money_in_cents, money_out_cents: current.money_out_cents },
+    by_month: byMonthList,
+    by_category: byCategoryList,
+    lines: lines
+      .filter((line) => line.date >= windowStart)
+      .slice(0, ACTIVITY_LINES_CAP)
+      .map((line) => ({
+        id: line.id,
+        source: line.source,
+        date: line.date,
+        account_id: line.account_id,
+        account_name: accountNames.get(line.account_id) ?? null,
+        description: line.description,
+        counterparty: line.counterparty,
+        amount_cents: line.amount_cents,
+        status: line.status,
+        category_id: line.category_id,
+        category_name: line.category_id === null ? null : (categoryNames.get(line.category_id) ?? null),
+      })),
+    lines_total: windowTotal,
+    lines_cap: ACTIVITY_LINES_CAP,
+    card_list: cards.map((card) => ({
+      id: card.id,
+      account_id: card.account_id,
+      cardholder_name: card.cardholder_name,
+      brand: card.brand,
+      last4: card.last4,
+      status: card.status,
+      spending_limit_cents: card.spending_limit_cents,
+      spent_this_month_cents: cardSpend.get(card.id) ?? 0,
+      expires_on: card.expires_on,
+    })),
+    bills: bills
+      .map((bill) => ({
+        id: bill.id,
+        payee_name: payeeNames.get(bill.payee_id) ?? lineById.get(bill.id)?.counterparty ?? bill.payee_id,
+        account_id: bill.account_id,
+        amount_cents: bill.amount_cents,
+        due_date: bill.due_date,
+        status: bill.status,
+        paid_at: bill.paid_at,
+      }))
+      .sort((left, right) => left.due_date.localeCompare(right.due_date)),
+    transfers: transfers
+      .filter((transfer) => transfer.scheduled_for >= windowStart || transfer.created_at.slice(0, 10) >= windowStart)
+      .slice(0, 100)
+      .map((transfer) => ({
+        id: transfer.id,
+        direction: transfer.direction,
+        rail: transfer.rail,
+        from_account_id: transfer.from_account_id,
+        counterparty:
+          lineById.get(transfer.id)?.counterparty ??
+          (transfer.to_account_id ? (accountNames.get(transfer.to_account_id) ?? 'Internal transfer') : 'Payee'),
+        amount_cents: transfer.amount_cents,
+        fee_cents: transfer.fee_cents,
+        status: transfer.status,
+        memo: transfer.memo,
+        scheduled_for: transfer.scheduled_for,
+        created_at: transfer.created_at,
+        audit_id: transfer.audit_id,
+      })),
+    audit: audit.map((entry) => ({
+      id: entry.id,
+      action: entry.action,
+      target_type: entry.target_type,
+      target_id: entry.target_id,
+      summary: entry.summary,
+      rationale: entry.rationale,
+      grant_id: entry.grant_id,
+      created_at: entry.created_at,
+    })),
   };
 }

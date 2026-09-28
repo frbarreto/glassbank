@@ -18,9 +18,11 @@ import type {
   XrayGrantFacts,
   XraySessionCounters,
   XrayViewerScope,
+  XraySessionIdentity,
 } from '../contracts/index.js';
 
 import { BoundedLru } from './bounded.js';
+import { strongerVerdict } from './verdicts.js';
 
 /** Caps on the three indexes (ADR-16). All of them are fed by attacker-influenced traffic. */
 export const MAX_SESSIONS = 2000;
@@ -45,6 +47,8 @@ export interface SessionRow {
   error_count: number;
   token_expires_at: string | null;
   boot_id: string | null;
+  /** v0.10 (D-29): who is on the other end, as far as this server can tell. */
+  identity: { -readonly [K in keyof XraySessionIdentity]: XraySessionIdentity[K] };
   counters: {
     events: number;
     calls: number;
@@ -132,6 +136,21 @@ export interface ReadModelOptions {
   readonly lookupEvent?: (id: number) => XrayEvent | null;
 }
 
+function emptyIdentity(): SessionRow['identity'] {
+  return {
+    signature_verdict: null,
+    signed_agent: null,
+    keyid: null,
+    signed_requests: 0,
+    verified_requests: 0,
+    challenged: false,
+    client_name: null,
+    client_version: null,
+    user_agent: null,
+    anthropic_egress: false,
+  };
+}
+
 function emptyCounters(): SessionRow['counters'] {
   return {
     events: 0,
@@ -188,6 +207,7 @@ export function createReadModel(options: ReadModelOptions = {}): ReadModel {
         error_count: 0,
         token_expires_at: null,
         boot_id: bootId,
+        identity: emptyIdentity(),
         counters: emptyCounters(),
       } satisfies SessionRow);
 
@@ -323,9 +343,39 @@ export function createReadModel(options: ReadModelOptions = {}): ReadModel {
       const row = touchSession(event);
       if (!row) return;
 
+      if (event.client) {
+        row.identity.client_name = event.client.name ?? row.identity.client_name;
+        row.identity.client_version = event.client.version ?? row.identity.client_version;
+      }
+
       switch (event.type) {
+        case 'http.request': {
+          // v0.10 (D-29): the three answers to "which provider", kept apart.
+          const identity = row.identity;
+          if (event.data.user_agent) identity.user_agent = event.data.user_agent;
+          if (event.data.anthropic_egress) identity.anthropic_egress = true;
+          const signature = event.data.signature;
+          if (signature) {
+            if (signature.challenge_sent) identity.challenged = true;
+            if (signature.present) {
+              identity.signed_requests += 1;
+              if (signature.verdict === 'verified') identity.verified_requests += 1;
+            }
+            const stronger = strongerVerdict(identity.signature_verdict, signature.verdict);
+            if (stronger !== identity.signature_verdict) {
+              identity.signature_verdict = stronger as XraySessionIdentity['signature_verdict'];
+              identity.signed_agent = signature.agent ?? null;
+              identity.keyid = signature.keyid ?? null;
+            }
+          }
+          break;
+        }
         case 'session.initialized':
           row.initialize_count = event.data.initialize_count;
+          if (event.data.client) {
+            row.identity.client_name = event.data.client.name;
+            row.identity.client_version = event.data.client.version ?? null;
+          }
           break;
         case 'tool.call.started':
           row.call_count += 1;

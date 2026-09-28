@@ -208,6 +208,13 @@ function inDigest(call, facts) {
         title: 'tool.call.started recorded an empty arguments object.',
       }),
     );
+  } else if (hop.rationale?.row && parts.length === 1) {
+    // The input is not empty: the rationale is an argument too. Say so, on the page's own rail.
+    parts.unshift(
+      digestPart(null, 'rationale only', 'page', focus, {
+        title: 'The model sent no argument but the rationale; its sentence is on the chip.',
+      }),
+    );
   }
   return parts;
 }
@@ -291,9 +298,19 @@ export function renderCallRow(call, model, ctx = {}) {
     h(
       'span',
       { class: 'call-digest' },
-      h('span', { class: 'call-in' }, ...inDigest(call, facts)),
+      h(
+        'span',
+        { class: 'call-in' },
+        h('span', { class: 'io-label', title: 'Input: the arguments the model wrote, as the client sent them' }, 'in'),
+        ...inDigest(call, facts),
+      ),
       h('span', { class: 'call-arrow', 'aria-hidden': 'true' }, '→'),
-      h('span', { class: 'call-out' }, ...outDigest(call, facts)),
+      h(
+        'span',
+        { class: 'call-out' },
+        h('span', { class: 'io-label', title: 'Output: the result text this server sent back, and how much of it the log kept' }, 'out'),
+        ...outDigest(call, facts),
+      ),
     ),
     overlap
       ? pill(overlap.text, {
@@ -444,6 +461,7 @@ function rawBlock(model, facts, eventId, key, kind) {
     }),
     open
       ? jsonView(event, {
+          envelope: true,
           // Kept under the pane's own viewer base so `viewerPrefixesOf` forgets it when the pane
           // closes (`public/open-state.js`).
           id: viewerId(kind === 'req' ? 'step-args' : 'step-result', facts.key, 'raw'),
@@ -474,6 +492,7 @@ function requestPane(call, model, facts) {
     'section',
     { class: 'wire wire-request' },
     h('h4', { class: 'sub-title wire-title' }, hop.title),
+    h('p', { class: 'wire-role' }, h('span', { class: 'io-label' }, 'input'), 'what the client sent, before this server touched it'),
     h('div', { class: 'wire-rows' }, ...rows),
     h(
       'p',
@@ -494,6 +513,7 @@ function insidePane(model, facts, inside) {
     'section',
     { class: 'inside' },
     h('h4', { class: 'sub-title wire-title' }, INSIDE_TITLE),
+    h('p', { class: 'wire-role' }, 'what ran between the input and the output'),
     disclosure(h('span', { class: 'inside-summary' }, inside.summary), key, open, {
       kind: 'inside',
       class: 'inside-toggle',
@@ -567,6 +587,7 @@ function insideCard(card, model, facts) {
             }),
             open
               ? jsonView(event, {
+          envelope: true,
                   id: viewerId('step-child', card.event_id),
                   state: facts.json,
                 })
@@ -595,6 +616,7 @@ function responsePane(call, model, facts) {
     'section',
     { class: 'wire wire-response' },
     h('h4', { class: 'sub-title wire-title' }, hop.title),
+    h('p', { class: 'wire-role' }, h('span', { class: 'io-label' }, 'output'), 'what this server sent back to the client'),
     h('div', { class: 'wire-rows' }, ...hop.rows.map((line) => wireRow(line, call, facts))),
     note(hop.size.sentence, 'page', facts, 'wire-size'),
     typeof preview === 'string' && preview.length > 0
@@ -659,6 +681,58 @@ function responsePane(call, model, facts) {
   );
 }
 
+/**
+ * The ids this one call is filed under, outermost first, each with what it names: the login, the
+ * grant, the session, the JSON-RPC id, and the log rows the call is made of. This page's reading
+ * of the envelopes, so it wears the page rail.
+ */
+export function traceOf(call, facts, store) {
+  const session = call.xs ? store.getSession(call.xs) : null;
+  const events = [
+    ['http', call.http?.event_id ?? null],
+    ['started', call.event_id],
+    ...facts.children.map((event) => [event.type.split('.').slice(-1)[0], event.id]),
+    ['ended', call.finished_event_id ?? null],
+  ].filter(([, id]) => id !== null && id !== undefined);
+  return {
+    login: call.login_id ?? session?.login_id ?? null,
+    grant: call.grant_id ?? session?.grant_id ?? null,
+    xs: call.xs ?? null,
+    request: call.request_id ?? null,
+    events: events.sort((a, b) => a[1] - b[1]),
+  };
+}
+
+function traceLine(call, model, facts) {
+  const trace = traceOf(call, facts, model.store);
+  const part = (name, value, title) =>
+    value ? h('span', { class: 'trace-id', title }, h('span', { class: 'trace-name' }, name), ' ', h('span', { class: 'mono' }, value)) : null;
+  const parts = [
+    part('login', trace.login, 'The browser that signed in (30-day cookie)'),
+    part('grant', trace.grant, 'The consent: scopes approved for one client, and its tokens'),
+    part('session', trace.xs, 'Requests of one grant without a long idle gap, minted by this server'),
+    part('request', trace.request ? `#${trace.request}` : null, 'The JSON-RPC id the client gave this call; everything it caused carries it'),
+  ].filter(Boolean);
+  return h(
+    'p',
+    {
+      class: cx('call-trace', 'who-page', dimmed(facts.focus, 'page') && 'is-dimmed'),
+      'data-actor': 'page',
+      title: 'Tracking ids, read by this page from the envelopes. They say where this call belongs; none of them is input or output.',
+    },
+    h('span', { class: 'trace-head' }, 'tracking'),
+    ...parts.flatMap((node, index) => [index > 0 ? h('span', { class: 'trace-sep', 'aria-hidden': 'true' }, '›') : null, node]),
+    trace.events.length
+      ? h(
+          'span',
+          { class: 'trace-events', title: 'The rows of the log this call is made of, in the order they were written' },
+          h('span', { class: 'trace-name' }, 'log rows'),
+          ...trace.events.map(([name, id]) => h('span', { class: 'mono trace-event' }, `#${id} ${name}`)),
+        )
+      : null,
+  );
+}
+
 /** The three panes, opened in place under the row. */
 export function renderCallOpen(call, model, ctx = {}) {
   const facts = factsOf(call, model, ctx);
@@ -666,6 +740,7 @@ export function renderCallOpen(call, model, ctx = {}) {
   return h(
     'div',
     { class: 'call-open' },
+    traceLine(call, model, facts),
     requestPane(call, model, facts),
     insidePane(model, facts, inside),
     responsePane(call, model, facts),

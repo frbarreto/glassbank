@@ -189,10 +189,19 @@ preflight() {
     *) die "ORIGIN_POLICY must be 'log-only' or 'allowlist', got '$ORIGIN_POLICY'." ;;
   esac
 
+  # advertise: every /mcp and /public/mcp answer carries Accept-Signature, inviting a client to sign
+  # with Web Bot Auth. The verdict is recorded and never changes an answer (D-29).
+  BOT_AUTH_CHALLENGE="${BOT_AUTH_CHALLENGE:-advertise}"
+  case "$BOT_AUTH_CHALLENGE" in
+    off|advertise) : ;;
+    *) die "BOT_AUTH_CHALLENGE must be 'off' or 'advertise', got '$BOT_AUTH_CHALLENGE'." ;;
+  esac
+
   say "image            : $IMAGE"
   say "PUBLIC_BASE_URL  : $PUBLIC_BASE_URL"
   say "PUBLIC_HOSTS     : $PUBLIC_HOSTS"
   say "ORIGIN_POLICY    : $ORIGIN_POLICY"
+  say "BOT_AUTH_CHALLENGE: $BOT_AUTH_CHALLENGE"
 }
 
 # ---------------------------------------------------------------------------------------------
@@ -225,6 +234,7 @@ deploy() {
   env_vars="$env_vars,PUBLIC_BASE_URL=$PUBLIC_BASE_URL"
   env_vars="$env_vars,PUBLIC_HOSTS=$PUBLIC_HOSTS"
   env_vars="$env_vars,ORIGIN_POLICY=$ORIGIN_POLICY"
+  env_vars="$env_vars,BOT_AUTH_CHALLENGE=$BOT_AUTH_CHALLENGE"
   env_vars="$env_vars,FEATURE_FLAGS=${FEATURE_FLAGS:-writes;transfers}"
   env_vars="$env_vars,XRAY_DB_PATH=${XRAY_DB_PATH:-/tmp/xray.sqlite}"
   env_vars="$env_vars,AUTH_DB_PATH=${AUTH_DB_PATH:-/tmp/auth.sqlite}"

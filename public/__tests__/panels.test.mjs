@@ -647,10 +647,17 @@ describe('Live timeline, chain mode', () => {
     // The page must arrive readable, not saturated: no pane is drawn before a click.
     expect(panesOf(tree)).toHaveLength(0);
     expect(findNodes(tree, (node) => hasClass(node, 'row'))).toHaveLength(0);
-    const ordinals = episodes.map((node) =>
-      textOf(findNodes(node, (child) => hasClass(child, 'episode-ordinal'))[0]),
-    );
-    expect(ordinals).toEqual(episodes.map((_, index) => `Episode ${index + 1}`));
+    // C1: one block per session, and the episodes are numbered inside their own session.
+    const sessions = findNodes(tree, (node) => hasClass(node, 'session-block'));
+    expect(sessions.map((node) => node.attrs['data-xs'])).toEqual(['xs_3f1c9a', 'xs_7b4d10']);
+    for (const session of sessions) {
+      const inSession = episodesOf(session);
+      const ordinals = inSession.map((node) =>
+        textOf(findNodes(node, (child) => hasClass(child, 'episode-ordinal'))[0]),
+      );
+      expect(ordinals).toEqual(inSession.map((_, index) => `Episode ${index + 1}`));
+    }
+    expect(sessions.reduce((sum, node) => sum + episodesOf(node).length, 0)).toBe(episodes.length);
 
     const tools = rowsOf(tree).map((node) =>
       textOf(findNodes(node, (child) => hasClass(child, 'call-tool'))[0]),
@@ -1061,18 +1068,29 @@ describe('Live timeline, chain mode', () => {
   });
 
   it('keeps the context rows between the episodes and never inside one', () => {
-    const tree = renderTimeline(chainModel());
-    const context = findNodes(tree, (node) => hasClass(node, 'flow-context'));
-    const labels = context.map((node) =>
+    const closed = renderTimeline(chainModel());
+    // C1: what happened before the first call is one line at the head of its session.
+    const connection = findNodes(closed, (node) => hasClass(node, 'session-connection'))[0];
+    expect(textOf(connection)).toContain('consent → token');
+    expect(textOf(connection)).toContain('initialize 2025-11-25 → tools/list · 17 tools');
+    expect(findNodes(connection, (node) => hasClass(node, 'flow-context'))).toHaveLength(0);
+
+    const tree = renderTimeline(chainModel({ open: { 'conn:xs_3f1c9a': 'open' } }));
+    const opened = findNodes(tree, (node) => hasClass(node, 'session-connection'))[0];
+    const steps = findNodes(opened, (node) => hasClass(node, 'flow-context')).map((node) =>
       textOf(findNodes(node, (child) => hasClass(child, 'flow-context-label'))[0]),
     );
-    expect(labels.slice(0, 5)).toEqual([
+    expect(steps.filter((label) => ['Grant created', 'Access token issued', 'Session started', 'initialize', 'tools/list'].includes(label))).toEqual([
       'Grant created',
       'Access token issued',
       'Session started',
       'initialize',
       'tools/list',
     ]);
+    const context = findNodes(tree, (node) => hasClass(node, 'flow-context'));
+    const labels = context.map((node) =>
+      textOf(findNodes(node, (child) => hasClass(child, 'flow-context-label'))[0]),
+    );
     expect(labels).toContain('Grant extended');
     expect(labels).toContain('JSON-RPC error');
     expect(labels).toContain('Events dropped');
@@ -1172,7 +1190,9 @@ describe('Live timeline, chain mode', () => {
     const context = chainModel({}, 20);
     const tree = renderTimeline(context);
     expect(episodesOf(tree)).toHaveLength(0);
-    expect(findNodes(tree, (node) => hasClass(node, 'flow-context')).length).toBeGreaterThan(0);
+    // The session is already there, with its connection folded into one line (C1).
+    expect(findNodes(tree, (node) => hasClass(node, 'session-block')).length).toBeGreaterThan(0);
+    expect(textOf(findNodes(tree, (node) => hasClass(node, 'session-connection'))[0])).toContain('session started');
     expect(textOf(tree)).toContain('No tool call yet');
     expect(textOf(tree)).toContain('each step naming what it passed to the next');
   });

@@ -324,6 +324,29 @@ async function main() {
       problems.push('the persona card did not say balances need a live server in fixture mode');
     }
 
+    // C1 and C2 (contracts v0.10): one block per session, its connection folded into one line, the
+    // proof of who connected in its head, and in / out said in words on every row.
+    const sessionPaint = JSON.parse(
+      await evaluate(
+        'JSON.stringify({sessions: [...document.querySelectorAll(".session-block")].map((n) => n.dataset.xs), connections: document.querySelectorAll(".session-connection").length, connectionRows: document.querySelectorAll(".session-connection .flow-context").length, badges: [...document.querySelectorAll(".session-head .identity-badge")].map((n) => n.textContent), io: [...document.querySelectorAll(".call-row .io-label")].map((n) => n.textContent), crossed: [...document.querySelectorAll(".session-block")].filter((block) => [...block.querySelectorAll(".call-row")].some((row) => !row.dataset.callKey.startsWith(block.dataset.xs + "#"))).length})',
+      ),
+    );
+    notes.push(
+      `sessions: ${sessionPaint.sessions.join(", ")}; ${sessionPaint.connections} connection lines; badges ${sessionPaint.badges.join(" | ")}`,
+    );
+    if (sessionPaint.sessions.join(',') !== 'xs_3f1c9a,xs_7b4d10') {
+      problems.push(`expected the two recorded sessions as blocks, saw ${sessionPaint.sessions.join(", ")}`);
+    }
+    if (sessionPaint.crossed !== 0) problems.push(`${sessionPaint.crossed} session block(s) drew another session's call`);
+    if (sessionPaint.connections !== 2) problems.push(`expected 2 connection lines, saw ${sessionPaint.connections}`);
+    if (sessionPaint.connectionRows !== 0) problems.push('a connection opened before anyone asked');
+    if (!sessionPaint.badges.every((text) => /claims .* · unsigned/.test(text))) {
+      problems.push(`an unsigned session was not drawn as a claim: ${sessionPaint.badges.join(" | ")}`);
+    }
+    if (sessionPaint.io.length !== 52 || sessionPaint.io.some((text, index) => text !== (index % 2 === 0 ? 'in' : 'out'))) {
+      problems.push(`expected "in" and "out" on each of the 26 rows, saw ${sessionPaint.io.length} labels`);
+    }
+
     // A head is a toggle now: it opens the call, closes the same call, and two stay open at once.
     const heads = `[...document.querySelectorAll('.call-head')]`;
     const spine = `JSON.stringify({panes: document.querySelectorAll('.call-open').length, cards: document.querySelectorAll('.inside-cards').length, open: document.querySelectorAll('.call-head[aria-expanded=true]').length, rows: document.querySelectorAll('.call-row').length, titles: [...document.querySelectorAll('.call-open .wire-title')].map((n) => n.textContent.split(' \u00b7 ')[0]), footers: document.querySelectorAll('.call-open .wire-footer').length, rationale: document.querySelectorAll('.call-open [data-path="params.arguments.rationale"]').length})`;
@@ -344,6 +367,11 @@ async function main() {
     if (opened.footers !== 2) problems.push(`an open call drew ${opened.footers} wire footers, expected 2`);
     if (opened.rationale !== 1) {
       problems.push(`the rationale was drawn ${opened.rationale} times, expected once, in arrival order`);
+    }
+    const trace = await evaluate("(document.querySelector('.call-open .call-trace') || {}).textContent || ''");
+    notes.push(`tracking line: ${trace}`);
+    if (!/login .*grant .*session .*request #/.test(trace)) {
+      problems.push(`an open call did not print its tracking ids: ${trace}`);
     }
     await evaluate(`${heads}[0].click()`);
     await sleep(160);
@@ -540,6 +568,58 @@ async function main() {
     await evaluate(`${heads}[1].click()`);
     await evaluate(`${heads}[2].click()`);
     await cdp.send('Emulation.clearDeviceMetricsOverride', {}, sessionId);
+    await sleep(300);
+
+    // D-31, D-32: the Account and the Overview take the whole width, draw from the sample account
+    // and from the recording counted in the page, and fit a phone.
+    await evaluate("window.__xray.act('set-page', 'account')");
+    await sleep(900);
+    const account = JSON.parse(
+      await evaluate(
+        'JSON.stringify({layout: document.getElementById("layout").hidden, title: (document.querySelector(".page-account .page-title") || {}).textContent || "", tiles: document.querySelectorAll(".account-tiles .stat").length, months: document.querySelectorAll(".chart-flow .chart-month").length, categories: document.querySelectorAll(".category-bar").length, audit: document.querySelectorAll(".audit-entry").length, lines: document.querySelectorAll(".statement-table tbody tr").length, cards: document.querySelectorAll(".bank-card").length})',
+      ),
+    );
+    notes.push(
+      `account: ${account.title}, ${account.tiles} tiles, ${account.months} months, ${account.categories} category bars, ${account.audit} agent changes, ${account.lines} statement rows, ${account.cards} cards`,
+    );
+    if (!account.layout) problems.push('the three-column layout stayed on screen under the Account view');
+    if (account.tiles !== 6 || account.months !== 12 || account.categories !== 8 || account.audit !== 2) {
+      problems.push(`the Account view is incomplete: ${JSON.stringify(account)}`);
+    }
+    await evaluate("window.__xray.act('account-filter', 'direction', 'in')");
+    await sleep(300);
+    const filteredIn = await evaluate('[...document.querySelectorAll(".statement-table td.is-out")].length');
+    if (filteredIn !== 0) problems.push(`the "money in" filter still drew ${filteredIn} outgoing lines`);
+    await evaluate("window.__xray.act('account-filter-clear')");
+    await evaluate("window.__xray.act('set-page', 'overview')");
+    await sleep(700);
+    const overview = JSON.parse(
+      await evaluate(
+        'JSON.stringify({tiles: document.querySelectorAll(".overview-tiles .stat").length, buckets: document.querySelectorAll(".chart-calls .chart-bucket").length, tools: document.querySelectorAll(".overview-table tbody tr").length, coverage: (document.querySelector(".overview-coverage") || {}).textContent || ""})',
+      ),
+    );
+    notes.push(`overview: ${overview.tiles} tiles, ${overview.buckets} time buckets, ${overview.tools} table rows`);
+    if (overview.tiles !== 9 || overview.buckets < 1 || overview.tools < 5) {
+      problems.push(`the Overview is incomplete: ${JSON.stringify(overview)}`);
+    }
+    if (!/Counted by this page from the recording/.test(overview.coverage)) {
+      problems.push('the Overview did not say it counted the recording in the page');
+    }
+    await cdp.send(
+      'Emulation.setDeviceMetricsOverride',
+      { width: 390, height: 844, deviceScaleFactor: 2, mobile: true },
+      sessionId,
+    );
+    await sleep(300);
+    const overviewPhone = await evaluate('document.documentElement.scrollWidth - document.documentElement.clientWidth');
+    await evaluate("window.__xray.act('set-page', 'account')");
+    await sleep(500);
+    const accountPhone = await evaluate('document.documentElement.scrollWidth - document.documentElement.clientWidth');
+    if (overviewPhone > 0 || accountPhone > 0) {
+      problems.push(`at 390px the Overview scrolls sideways by ${overviewPhone}px and the Account by ${accountPhone}px`);
+    }
+    await cdp.send('Emulation.clearDeviceMetricsOverride', {}, sessionId);
+    await evaluate("window.__xray.act('set-page', 'chain')");
     await sleep(300);
 
     // The erase controls never appear in fixture mode: there is no server to ask.

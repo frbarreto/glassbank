@@ -57,7 +57,17 @@ import {
 } from './catalogue.js';
 import { describeFilter, isEmptyFilter, matchesFilter } from './filters.js';
 import { buildChain, incomingLinks, threadsOf } from './chain.js';
-import { DEPTHS, callKey, episodeKey, isOpen, whyKey } from './open-state.js';
+import {
+  DEPTHS,
+  GLOSSARY_KEY,
+  callKey,
+  connKey,
+  episodeKey,
+  isOpen,
+  sessionKey,
+  whyKey,
+} from './open-state.js';
+import { identityBadge } from './identity.js';
 import { renderCallOpen, renderCallRow } from './panel-call.js';
 import { ACTOR_MEANING, actorOfEvent, legend } from './provenance.js';
 
@@ -559,66 +569,386 @@ function episodeCard(episode, model, ctx, incoming, previousTool) {
 }
 
 /**
- * Episodes and context rows merged by event id, ascending. Episodes are built from every call up
- * to the cutoff - the filter narrows which steps are drawn, never which calls the chain is derived
- * from, because a link computed over a filtered subset would claim a hand-off that never happened.
+ * The events that set a session up: the grant and its tokens, the session start, `initialize` and
+ * the listings. Before the session's first call they are drawn inside its connection block; after
+ * it (a re-initialize, a re-list, a token refresh) they stay context rows in the session's chain.
+ */
+export const CONNECTION_TYPES = new Set([
+  'auth.client.registered',
+  'auth.client.reconstructed',
+  'auth.login.created',
+  'auth.grant.created',
+  'auth.grant.updated',
+  'auth.token.issued',
+  'auth.token.refreshed',
+  'auth.verified',
+  'session.started',
+  'session.initialized',
+  'catalog.tools_listed',
+  'catalog.resources_listed',
+  'catalog.prompts_listed',
+  'catalog.availability',
+]);
+
+/** The one-word step a connection event stands for, in the order a client goes through them. */
+export function connectionStep(event) {
+  const data = event.data ?? {};
+  switch (event.type) {
+    case 'auth.client.registered':
+      return 'client registered';
+    case 'auth.client.reconstructed':
+      return 'client rebuilt';
+    case 'auth.login.created':
+      return 'signed in';
+    case 'auth.grant.created':
+      return 'consent';
+    case 'auth.grant.updated':
+      return 'consent extended';
+    case 'auth.token.issued':
+      return 'token';
+    case 'auth.token.refreshed':
+      return 'token refreshed';
+    case 'auth.verified':
+      return 'bearer checked';
+    case 'session.started':
+      return 'session started';
+    case 'session.initialized':
+      return `initialize ${data.protocol_version_negotiated ?? ''}`.trim();
+    case 'catalog.tools_listed':
+      return `tools/list · ${count(data.count ?? 0)} tools`;
+    case 'catalog.resources_listed':
+      return 'resources/list';
+    case 'catalog.prompts_listed':
+      return 'prompts/list';
+    default:
+      return null;
+  }
+}
+
+/**
+ * The session an event without an `xs` belongs to: a grant's consent and tokens happen before its
+ * first session starts, so they go to the first session of that grant that starts after them, or
+ * to its latest one before them. Events with neither an `xs` nor a grant stay outside every block.
+ */
+function homeSessionOf(event, sessionsByGrant) {
+  if (event.xs) return event.xs;
+  const grantId = event.grant_id ?? event.data?.grant_id ?? null;
+  if (!grantId) return null;
+  const candidates = sessionsByGrant.get(grantId);
+  if (!candidates || candidates.length === 0) return null;
+  // A step-up in the middle of a session belongs to that session, not to the next one.
+  const within = candidates.find(
+    (entry) => entry.first_event_id <= event.id && event.id <= entry.last_event_id,
+  );
+  if (within) return within.xs;
+  const after = candidates.find((entry) => entry.first_event_id > event.id);
+  return (after ?? candidates[candidates.length - 1]).xs;
+}
+
+/**
+ * The chain mode's content, one block per session (C1): its connection block, then its episodes
+ * and context rows by event id, then its end. Nothing of one session is ever drawn inside another;
+ * events that belong to no session (a restart, a dropped-events notice) sit between the blocks.
+ *
+ * Episodes are built per session, from every call up to the cutoff - the filter narrows which
+ * steps are drawn, never which calls the chain is derived from, because a link computed over a
+ * filtered subset would claim a hand-off that never happened.
  */
 export function chainModeItems(model, all, cutoff) {
   const { store, view } = model;
   const events = all.filter((event) => event.id <= cutoff);
   const byId = new Map(events.map((event) => [event.id, event]));
   const calls = store.getCalls({ xs: view.selectedXs }).filter((call) => call.event_id <= cutoff);
-  const { links, episodes } = buildChain(calls, byId);
-  const incoming = incomingLinks(links);
 
-  const matching = episodes.filter((episode) =>
-    episode.calls.some((call) => callMatchesFilter(store, view.filter, call)),
-  );
-  const hiddenEpisodes = Math.max(0, matching.length - MAX_EPISODES);
-  const drawn = matching.slice(hiddenEpisodes);
-  const firstDrawnId = drawn.length ? drawn[0].event_id : Number.POSITIVE_INFINITY;
+  const callsByXs = new Map();
+  for (const call of calls) {
+    const key = call.xs ?? '';
+    if (!callsByXs.has(key)) callsByXs.set(key, []);
+    callsByXs.get(key).push(call);
+  }
 
-  const context = events.filter(
-    (event) =>
-      isContextEvent(store, event) &&
-      matchesFilter(view.filter, event) &&
-      (hiddenEpisodes === 0 || event.id >= firstDrawnId),
+  const firstIds = new Map();
+  const lastIds = new Map();
+  for (const event of events) {
+    if (!event.xs) continue;
+    if (!firstIds.has(event.xs)) firstIds.set(event.xs, event.id);
+    lastIds.set(event.xs, event.id);
+  }
+  for (const call of calls) {
+    if (call.xs && !firstIds.has(call.xs)) firstIds.set(call.xs, call.event_id);
+  }
+  const sessionsByGrant = new Map();
+  for (const [xs, firstId] of [...firstIds.entries()].sort((a, b) => a[1] - b[1])) {
+    const session = store.getSession(xs);
+    const grantId = session?.grant_id ?? calls.find((call) => call.xs === xs)?.grant_id ?? null;
+    if (!grantId) continue;
+    if (!sessionsByGrant.has(grantId)) sessionsByGrant.set(grantId, []);
+    sessionsByGrant.get(grantId).push({ xs, first_event_id: firstId, last_event_id: lastIds.get(xs) ?? firstId });
+  }
+
+  const blocks = new Map();
+  const blockOf = (xs) => {
+    if (!blocks.has(xs)) {
+      blocks.set(xs, {
+        kind: 'session',
+        xs,
+        firstId: firstIds.get(xs) ?? Number.POSITIVE_INFINITY,
+        connection: [],
+        context: [],
+        ended: null,
+        episodes: [],
+        firstCallId: Number.POSITIVE_INFINITY,
+      });
+    }
+    return blocks.get(xs);
+  };
+
+  const allLinks = [];
+  const allEpisodes = [];
+  for (const [xs, sessionCalls] of callsByXs) {
+    const { links, episodes } = buildChain(sessionCalls, byId);
+    allLinks.push(...links);
+    const block = blockOf(xs || null);
+    block.episodes = episodes;
+    block.firstCallId = Math.min(...sessionCalls.map((call) => call.event_id));
+    allEpisodes.push(...episodes);
+  }
+  const incoming = incomingLinks(allLinks);
+
+  const loose = [];
+  for (const event of events) {
+    const home = homeSessionOf(event, sessionsByGrant);
+    if (view.selectedXs && home !== view.selectedXs && familyOf(event.type) !== 'server') continue;
+    if (home === null) {
+      if (isContextEvent(store, event) && matchesFilter(view.filter, event)) loose.push(event);
+      continue;
+    }
+    const block = blockOf(home);
+    block.firstId = Math.min(block.firstId, event.id);
+    if (event.type === 'session.ended') {
+      block.ended = event;
+      continue;
+    }
+    if (CONNECTION_TYPES.has(event.type) && event.id < block.firstCallId) {
+      block.connection.push(event);
+      continue;
+    }
+    if (isContextEvent(store, event) && matchesFilter(view.filter, event)) block.context.push(event);
+  }
+
+  // The same 40-episode ceiling as before, taken from the oldest sessions first.
+  const ordered = [...blocks.values()].sort((a, b) => a.firstId - b.firstId);
+  let budget = MAX_EPISODES;
+  let hiddenEpisodes = 0;
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const block = ordered[index];
+    const matching = block.episodes.filter((episode) =>
+      episode.calls.some((call) => callMatchesFilter(store, view.filter, call)),
+    );
+    const kept = matching.slice(Math.max(0, matching.length - budget));
+    hiddenEpisodes += matching.length - kept.length;
+    budget -= kept.length;
+    block.drawnEpisodes = kept;
+  }
+  const filtered = !isEmptyFilter(view.filter);
+  const drawnBlocks = ordered.filter(
+    (block) => !filtered || block.drawnEpisodes.length > 0 || block.context.length > 0,
   );
+
   const items = [
-    ...drawn.map((episode) => ({ id: episode.event_id, episode })),
-    ...context.map((event) => ({ id: event.id, event })),
+    ...drawnBlocks.map((block) => ({ id: block.firstId, block })),
+    ...loose.map((event) => ({ id: event.id, event })),
   ].sort((a, b) => a.id - b.id);
 
   return {
     items,
     byId,
     incoming,
-    episodes,
+    episodes: allEpisodes,
+    blocks: drawnBlocks,
     callCount: calls.filter((call) => callMatchesFilter(store, view.filter, call)).length,
     hiddenEpisodes,
     // What one call needs to draw itself (`public/panel-call.js`): the chain links behind its
     // ports, every call of the window behind its overlap chip, and the pause point.
-    ctx: { cutoff, links, calls, byId },
+    ctx: { cutoff, links: allLinks, calls, byId },
   };
+}
+
+/** The ids a reader meets on this page, and what each one names (the toolbar's glossary). */
+export const ID_GLOSSARY = [
+  ['lgn_', 'login', 'The browser that signed in at the bank’s login page (a 30-day cookie). One person, possibly several clients.'],
+  ['grt_', 'grant', 'One consent: the scopes the person approved for one client, and the tokens minted from it. grt_pub_ is an anonymous public-lane visitor.'],
+  ['xs_', 'session', 'The requests of one grant with no idle gap longer than the limit between them. Minted by this server, because the transport keeps no session of its own.'],
+  ['#6', 'request', 'The JSON-RPC id the client chose for one call. Everything the call caused inside the server carries the same id.'],
+  ['#42', 'event', 'One row of this server’s log, numbered in the order it was written. A call is several events: started, what happened inside, completed.'],
+  ['per_', 'persona', 'The demo customer whose data the calls read and change.'],
+  ['boot_', 'boot', 'One run of the server process. A new boot means a restart: in-memory state was lost.'],
+];
+
+function glossary() {
+  return h(
+    'dl',
+    { class: 'id-glossary' },
+    ...ID_GLOSSARY.map(([prefix, name, meaning]) =>
+      h('div', { class: 'id-glossary-row' }, h('dt', {}, h('span', { class: 'mono' }, prefix), ' ', name), h('dd', {}, meaning)),
+    ),
+    h(
+      'p',
+      { class: 'id-glossary-note' },
+      'Inside a call, REQUEST is the input as the client sent it, RESPONSE the output as this server sent it back, and INSIDE what happened in between. The envelope of every event (id, ts, xs, grant, request id) is tracking recorded by this server; data is what the event says.',
+    ),
+  );
+}
+
+/** The ids of a session, each with the sentence that says what it names. */
+function sessionTrace(session, block) {
+  const parts = [
+    ['login', session?.login_id ?? null, ID_GLOSSARY[0][2]],
+    ['grant', session?.grant_id ?? null, ID_GLOSSARY[1][2]],
+    ['session', block.xs, ID_GLOSSARY[2][2]],
+  ].filter(([, value]) => value);
+  return h(
+    'span',
+    { class: 'trace-ids', title: 'The tracking ids this session is filed under' },
+    ...parts.flatMap(([name, value, meaning], index) => [
+      index > 0 ? h('span', { class: 'trace-sep', 'aria-hidden': 'true' }, '›') : null,
+      h('span', { class: 'trace-id', title: `${name}: ${meaning}` }, h('span', { class: 'trace-name' }, name), ' ', h('span', { class: 'mono' }, value)),
+    ]),
+  );
+}
+
+/** The session's head: who connected, as what, under which grant, and how it went. */
+function sessionHead(block, model, open) {
+  const { store } = model;
+  const session = store.getSession(block.xs) ?? { xs: block.xs };
+  const grant = session.grant_id ? store.getGrant(session.grant_id) : null;
+  const client = session.client ?? null;
+  const calls = block.episodes.reduce((sum, episode) => sum + episode.calls.length, 0);
+  const failed = block.episodes.reduce((sum, episode) => sum + (episode.failures ?? 0), 0);
+  const ended = block.ended;
+  const personaName = session.persona?.name ?? null;
+  const publicVisitor = String(session.grant_id ?? '').startsWith('grt_pub_');
+  return h(
+    'header',
+    { class: 'session-head' },
+    h(
+      'div',
+      { class: 'session-head-line' },
+      disclosure(h('span', { class: 'session-title' }, 'Session ', h('span', { class: 'mono' }, block.xs)), sessionKey(block.xs), open, {
+        kind: 'sess',
+        class: 'session-toggle',
+        title: open ? 'Fold this session to its head' : 'Show this session',
+      }),
+      identityBadge(session),
+      client
+        ? h('span', { class: 'session-client mono', title: 'clientInfo, verbatim and untrusted (A-28)' }, `${client.name ?? ''} ${client.version ?? ''}`.trim())
+        : null,
+      session.protocol_version ? h('span', { class: 'session-fact mono' }, session.protocol_version) : null,
+      h('span', { class: 'session-fact' }, plural(calls, 'call')),
+      failed ? statusBadge('error', `${count(failed)} failed`) : null,
+      ended
+        ? tag(`ended · ${String(ended.data?.reason ?? 'ended').replace(/_/g, ' ')}`, 'tag-quiet')
+        : tag('open', 'tag-ok'),
+    ),
+    h(
+      'div',
+      { class: 'session-head-sub' },
+      sessionTrace(session, block),
+      publicVisitor
+        ? h('span', { class: 'session-fact' }, 'anonymous public-lane visitor')
+        : grant
+          ? h(
+              'span',
+              { class: 'session-fact', title: (grant.scopes ?? []).join(' ') },
+              `${String(grant.auth_level ?? '').replace('_', ' ')} · ${plural((grant.scopes ?? []).length, 'scope')}`,
+            )
+          : null,
+      personaName ? h('span', { class: 'session-fact' }, `as ${personaName}`) : null,
+      h(
+        'span',
+        { class: 'session-fact mono', title: `${session.started_at ?? ''} to ${session.last_seen_at ?? ''}` },
+        `${clockSeconds(session.started_at)} - ${clockSeconds(ended?.ts ?? session.last_seen_at)}`,
+      ),
+    ),
+  );
+}
+
+/** Everything that happened before the first call, folded into one line that opens. */
+function connectionBlock(block, model) {
+  const { view } = model;
+  if (block.connection.length === 0) return null;
+  const key = connKey(block.xs);
+  const open = isOpen(view, key, 'conn');
+  const steps = [];
+  for (const event of block.connection) {
+    const step = connectionStep(event);
+    if (step && steps[steps.length - 1] !== step) steps.push(step);
+  }
+  return h(
+    'div',
+    { class: cx('session-connection', open && 'is-open') },
+    disclosure(
+      h(
+        'span',
+        { class: 'connection-line' },
+        h('span', { class: 'connection-label' }, 'connection'),
+        h('span', { class: 'connection-steps' }, steps.join(' → ')),
+      ),
+      key,
+      open,
+      { kind: 'conn', class: 'connection-toggle', title: open ? 'Fold the connection back to one line' : 'Show every step of the connection' },
+    ),
+    open ? h('div', { class: 'connection-rows' }, ...block.connection.map((event) => contextRow(event, view))) : null,
+  );
+}
+
+/** One session: its head, its connection, its episodes and context rows by id, its end. */
+function sessionBlock(block, model, ctx, incoming) {
+  const { view } = model;
+  const open = isOpen(view, sessionKey(block.xs), 'sess');
+  const nodes = [];
+  if (open) {
+    const items = [
+      ...block.drawnEpisodes.map((episode) => ({ id: episode.event_id, episode })),
+      ...block.context.map((event) => ({ id: event.id, event })),
+    ].sort((a, b) => a.id - b.id);
+    let previousTool = null;
+    for (const item of items) {
+      if (item.episode) {
+        nodes.push(episodeCard(item.episode, model, ctx, incoming, previousTool));
+        const last = item.episode.calls[item.episode.calls.length - 1];
+        previousTool = last ? last.tool : previousTool;
+      } else {
+        nodes.push(contextRow(item.event, view));
+      }
+    }
+  }
+  return h(
+    'section',
+    { class: cx('session-block', open && 'is-open'), 'data-xs': block.xs },
+    sessionHead(block, model, open),
+    open ? connectionBlock(block, model) : null,
+    open && nodes.length ? h('div', { class: 'session-flow' }, ...nodes) : null,
+    open && block.drawnEpisodes.length === 0 && block.context.length === 0
+      ? h('p', { class: 'session-empty muted' }, 'No tool call in this session yet.')
+      : null,
+    open && block.ended
+      ? h('div', { class: 'session-end' }, contextRow(block.ended, view))
+      : null,
+  );
 }
 
 function chainBody(model, all, listing) {
   const { view } = model;
   const { items, incoming, hiddenEpisodes, callCount, ctx } = listing;
-  let previousTool = null;
-  const nodes = items.map((item) => {
-    if (item.episode) {
-      const node = episodeCard(item.episode, model, ctx, incoming, previousTool);
-      const last = item.episode.calls[item.episode.calls.length - 1];
-      previousTool = last ? last.tool : previousTool;
-      return node;
-    }
-    return contextRow(item.event, view);
-  });
+  const nodes = items.map((item) =>
+    item.block ? sessionBlock(item.block, model, ctx, incoming) : contextRow(item.event, view),
+  );
   const filtered = !isEmptyFilter(view.filter);
   return h(
     'div',
     { class: 'timeline-scroll timeline-scroll-chain', id: 'timeline-scroll' },
+    isOpen(view, GLOSSARY_KEY, 'toolbarMore') ? glossary() : null,
     hiddenEpisodes > 0
       ? h(
           'p',
@@ -813,6 +1143,13 @@ function toolbar(model, mode, shown, total) {
               arg: 'all',
               variant: 'quiet',
               title: 'Close every call and connection block, back to one line each',
+            })
+          : null,
+        mode === 'chain'
+          ? disclosure('What the ids mean', GLOSSARY_KEY, isOpen(view, GLOSSARY_KEY, 'toolbarMore'), {
+              kind: 'toolbarMore',
+              class: 'btn btn-quiet glossary-toggle',
+              title: 'login, grant, session, request and event ids, and input versus output',
             })
           : null,
         button(view.paused ? 'Resume' : 'Pause', 'toggle-pause', {

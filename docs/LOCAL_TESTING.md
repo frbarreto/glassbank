@@ -190,7 +190,7 @@ replays `test/fixtures/events.jsonl` with no server traffic (`&rate=100` speeds 
 `http://localhost:8080/xray/?lane=public` (or "Watch the public lane" on the pairing screen) shows the
 anonymous callers of `/public/mcp` with no cookie, read-only; `curl -s
 "http://localhost:8080/xray/api/sessions?lane=public"` is the same over HTTP. Dashboard
-checks: `npx vitest run public/__tests__` (286 tests) and `node public/_dev/check-console.mjs` (headless Chrome
+checks: `npx vitest run public/__tests__` (316 tests) and `node public/_dev/check-console.mjs` (headless Chrome
 on an auto-assigned DevTools port, `CDP_PORT` pins it; interrupting the run still kills Chrome and
 removes its profile).
 
@@ -213,6 +213,30 @@ XRAY_ADMIN_TOKEN=local-only-admin-token-at-least-32-chars npm run dev           
 XRAY_ADMIN_TOKEN=local-only-admin-token-at-least-32-chars ./infra/export.sh http://localhost:8080   # -> exports/xray-localhost-<stamp>.jsonl
 sqlite3 /tmp/xray.sqlite "select id, ts, type, xs from events order by id"                # or read XRAY_DB_PATH directly
 ```
+
+### The three views and a signed agent (contracts v0.10)
+
+`scripts/demo-traffic.mjs` fills a running server with one of everything the dashboard shows: a
+signed-in agent (spending analysis, a card lock, a $300 transfer, each with its rationale), an
+unsigned public visitor that calls itself `claude-ai`, and a public visitor that signs every request
+with Web Bot Auth, its key served by the script on loopback (one tool call tampered, recorded as
+`invalid_signature` and answered all the same). The loopback directory needs the development knob:
+
+```bash
+BOT_AUTH_ALLOW_LOOPBACK=true BOT_AUTH_CHALLENGE=advertise npm run dev
+node scripts/demo-traffic.mjs
+# Open:
+#   public overview   http://localhost:8080/xray/?lane=public
+#   your session      http://localhost:8080/xray/s/BANK-XXXX-XXXX-XX
+#   sample recording  http://localhost:8080/xray/?fixture=1
+```
+
+The header switches between Chain (one block per session: who connected and the proof, the
+tracking ids, the connection folded into one line, the calls with `in` and `out`), Account (the
+persona's money, and each change the agent made linked to its call) and Overview (counts across
+everything you may read); `?view=account` or `?view=overview` opens one directly. Over HTTP:
+`curl -s "http://localhost:8080/xray/api/stats?lane=public&window=1h"` and, with the pairing cookie,
+`curl -s -b /tmp/xray.cookies "http://localhost:8080/xray/api/sessions/$XS/bank/activity?months=3"`.
 
 ## 9. Run the container
 

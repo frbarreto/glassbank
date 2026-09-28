@@ -7,7 +7,9 @@
  *
  * Keys are built from ids that survive a backfill, never from an index:
  *   `call:<xs>#<rid>`  `call:<xs>#<rid>/req` `/res` `/inside` `/inside/<eventId>`
- *   `conn:<xs>`        `conn:<xs>/tool/<name>`
+ *   `sess:<xs>`        one session's block (C1), open at every depth until the reader folds it
+ *   `conn:<xs>`        `conn:<xs>/tool/<name>`  the connection block at the head of a session
+ *   `ui:glossary`      the toolbar's "what the ids mean"
  *   `ep:<first call key>`  `ep:<first call key>/why`
  *   `cat:<xs>/tool/<name>` `cat:<xs>/tool/<name>/raw` (the Possibility space, in the detail panel)
  * `view.open` holds only explicit choices (`open` / `closed`); everything else answers from the
@@ -27,8 +29,11 @@ export const OPEN_CAP = 400;
  * `toolbarMore`) is closed at every depth and opens only when the reader says so.
  */
 const DEFAULTS = {
+  // A session stays a visible block at every depth: folding one is the reader's choice (C1).
+  sess: { overview: true, calls: true, open: true, inside: true },
   ep: { overview: false, calls: true, open: true, inside: true },
-  conn: { overview: false, calls: false, open: false, inside: false },
+  // The connection is one line until the reader asks, or the depth says "everything open".
+  conn: { overview: false, calls: false, open: true, inside: true },
   call: { overview: false, calls: false, open: true, inside: true },
   inside: { overview: false, calls: false, open: false, inside: true },
   card: { overview: false, calls: false, open: false, inside: true },
@@ -76,6 +81,14 @@ export function insideKey(key) {
 export function cardKey(key, eventId) {
   return `${key}/inside/${eventId}`;
 }
+
+/** One session's block on the spine (C1). */
+export function sessionKey(xs) {
+  return `sess:${xs}`;
+}
+
+/** The toolbar's glossary of ids. Always resolves; closed until asked. */
+export const GLOSSARY_KEY = 'ui:glossary';
 
 export function connKey(xs) {
   return `conn:${xs}`;
@@ -290,6 +303,7 @@ function resolves(key, store) {
   if (key.startsWith('call:') || key.startsWith('ep:')) {
     return Boolean(store.getCall?.(bareKeyOf(key)));
   }
+  if (key.startsWith('sess:')) return Boolean(store.getSession?.(key.slice('sess:'.length)));
   if (key.startsWith('cat:')) {
     // `cat:<xs>/tool/<name>` and its `/raw`: kept while the session's listing still names the tool.
     const [xs, section, name] = key.slice('cat:'.length).split('/');

@@ -44,9 +44,9 @@ mcp_bank/
   test/
     contracts/     barrel, catalog, events fixture, fakes, scopes, xray-api contract tests
     e2e/           oauth-walk.mjs (8899) session-walk.mjs (8897) public-walk.mjs (8896) live-dashboard.mjs (8095, Chrome)
-    fixtures/      events.jsonl build-events.ts   the recorded session the dashboard replays
+    fixtures/      events.jsonl build-events.ts   the recorded session the dashboard replays; bank-activity.json build-bank-activity.ts   the sample account (v0.10)
     import-boundaries.test.ts
-  scripts/         local-login.mjs (npm run login); smoke-worker-sqlite.mjs and its helpers
+  scripts/         local-login.mjs (npm run login); demo-traffic.mjs (fills a local server for the three X-ray views, v0.10); smoke-worker-sqlite.mjs and its helpers
                    (worker-sqlite-task.mjs bomb-child.mjs probe-*.mjs check-worker-sqlite.ts)
   infra/           Dockerfile cloudbuild.yaml bootstrap.sh ci-bootstrap.sh deploy.sh smoke.sh domain.sh observe.sh pause.sh export.sh
     local/         docker-compose.yml cloudflared.md

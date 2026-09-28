@@ -42,6 +42,55 @@ const FULL_STRING = '!full';
 const RAW = '!raw';
 const COPIED = '!copied';
 
+/**
+ * An event envelope drawn in two groups (C2): the correlation and tracking fields this server
+ * stamps on every event, then `data`, what this particular event says. Same paths, same state,
+ * same Raw and Copy - only the reading order changes, so the payload is never lost among the ids.
+ */
+function envelopeSplit(value, options) {
+  return (
+    options.envelope === true &&
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    'data' in value &&
+    'type' in value
+  );
+}
+
+function envelopeTree(value, rows, id, state) {
+  const tracking = rows.filter(([key]) => key !== 'data');
+  const data = rows.find(([key]) => key === 'data');
+  return h(
+    'div',
+    { class: 'jv-children jv-root jv-envelope' },
+    h(
+      'div',
+      { class: 'jv-group jv-group-envelope' },
+      h(
+        'p',
+        { class: 'jv-group-title' },
+        h('span', { class: 'jv-group-name' }, 'envelope'),
+        ' tracking and correlation this server stamps on every event: which session, grant and request it belongs to, when, in what order',
+      ),
+      ...tracking.map(([key, child]) => valueRow(key, child, pathOf(id, key), state, 1, false, id)),
+    ),
+    data
+      ? h(
+          'div',
+          { class: 'jv-group jv-group-data' },
+          h(
+            'p',
+            { class: 'jv-group-title' },
+            h('span', { class: 'jv-group-name' }, 'data'),
+            ` what this ${String(value.type)} event says`,
+          ),
+          valueRow('data', data[1], pathOf(id, 'data'), state, 0, false, id),
+        )
+      : null,
+  );
+}
+
 /** A viewer id with no dot in it, so paths split cleanly whatever the caller passes. */
 export function viewerId(...parts) {
   return parts
@@ -353,34 +402,40 @@ export function jsonView(value, options = {}) {
     h(
       'div',
       { class: 'jv-tree', hidden: raw ? true : null },
-      branch && rows.length === 0
-        ? h('p', { class: 'jv-empty muted' }, Array.isArray(value) ? 'an empty list' : 'no fields')
-        : branch
+      envelopeSplit(value, options)
+        ? envelopeTree(value, rows, id, state)
+        : branch && rows.length === 0
           ? h(
-              'div',
-              { class: 'jv-children jv-root' },
-              ...shownRows.map(([key, child]) =>
-                valueRow(key, child, pathOf(id, key), state, 0, Array.isArray(value), id),
-              ),
-              // The root used to bypass this, so a viewer whose whole value is a large array drew
-              // every item. `argumentList` hands each non-string argument to a viewer as its root,
-              // and an argument is whatever the model decided to send.
-              rows.length > ITEM_PAGE
-                ? h(
-                    'button',
-                    {
-                      type: 'button',
-                      class: 'jv-row jv-more-items',
-                      'data-action': 'toggle-json',
-                      'data-arg': `${id}${SHOW_ALL}`,
-                    },
-                    showAllRows
-                      ? `show only the first ${count(ITEM_PAGE)}`
-                      : `and ${count(rows.length - shownRows.length)} more`,
-                  )
-                : null,
+              'p',
+              { class: 'jv-empty muted' },
+              Array.isArray(value) ? 'an empty list' : 'no fields',
             )
-          : valueRow(null, value, `${id}.value`, state, 0, false, id),
+          : branch
+            ? h(
+                'div',
+                { class: 'jv-children jv-root' },
+                ...shownRows.map(([key, child]) =>
+                  valueRow(key, child, pathOf(id, key), state, 0, Array.isArray(value), id),
+                ),
+                // The root used to bypass this, so a viewer whose whole value is a large array drew
+                // every item. `argumentList` hands each non-string argument to a viewer as its root,
+                // and an argument is whatever the model decided to send.
+                rows.length > ITEM_PAGE
+                  ? h(
+                      'button',
+                      {
+                        type: 'button',
+                        class: 'jv-row jv-more-items',
+                        'data-action': 'toggle-json',
+                        'data-arg': `${id}${SHOW_ALL}`,
+                      },
+                      showAllRows
+                        ? `show only the first ${count(ITEM_PAGE)}`
+                        : `and ${count(rows.length - shownRows.length)} more`,
+                    )
+                  : null,
+              )
+            : valueRow(null, value, `${id}.value`, state, 0, false, id),
     ),
     h(
       'pre',

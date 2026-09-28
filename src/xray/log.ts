@@ -47,6 +47,14 @@ export interface EventLog {
   readLast(limit: number, filter: LogFilter): XrayEvent[];
   readSession(xs: string, afterId: number, limit: number): XrayEvent[];
   readById(id: number): XrayEvent | null;
+  /**
+   * v0.10 (D-32): the few fields the overview counts, extracted inside SQLite (`json_extract`) so a
+   * scan never parses the raw request bodies. Rows of `OVERVIEW_TYPES` only, `ts_ms >= sinceMs`,
+   * `id > afterId`, oldest first. `matchesScope` in the read model stays the authority.
+   */
+  readOverviewRows(sinceMs: number, afterId: number, limit: number, filter: LogFilter): OverviewRow[];
+  /** The oldest timestamp the log holds for the filter, `null` when it holds nothing. */
+  oldestTs(filter: LogFilter): string | null;
   /** The most recent `limit` events, oldest first: what the read model is rebuilt from. */
   recent(limit: number): XrayEvent[];
   count(): number;
@@ -75,6 +83,157 @@ export interface EventLog {
   /** Page size, page count and free pages: the real footprint, for `XrayStats`. */
   fileStats(): { readonly pageSize: number; readonly pageCount: number; readonly freePages: number };
   close(): void;
+}
+
+/** The event types the overview reads (v0.10, D-32). */
+export const OVERVIEW_TYPES = [
+  'http.request',
+  'session.started',
+  'session.initialized',
+  'tool.call.started',
+  'tool.call.completed',
+  'tool.call.denied',
+  'protocol.error',
+] as const;
+
+/** One event as the overview sees it: the envelope's correlation and a handful of data fields. */
+export interface OverviewRow {
+  readonly id: number;
+  readonly ts: string;
+  readonly type: string;
+  readonly xs: string | null;
+  readonly login_id: string | null;
+  readonly grant_id: string | null;
+  readonly request_id: string | null;
+  readonly client_name: string | null;
+  readonly client_version: string | null;
+  readonly tool: string | null;
+  readonly duration_ms: number | null;
+  readonly is_error: boolean | null;
+  readonly status: number | null;
+  readonly rate_limited: boolean | null;
+  readonly user_agent: string | null;
+  readonly anthropic_egress: boolean | null;
+  readonly sig_present: boolean | null;
+  readonly sig_verdict: string | null;
+  readonly sig_agent: string | null;
+  readonly rationale_present: boolean | null;
+  readonly denied_reason: string | null;
+  readonly error_message: string | null;
+  /** `tool.call.started` only: the arguments object as stored. */
+  readonly arguments: Record<string, unknown> | null;
+}
+
+function asText(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function asNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function asFlag(value: unknown): boolean | null {
+  if (value === true || value === 1) return true;
+  if (value === false || value === 0) return false;
+  return null;
+}
+
+/** The same row, read from an event in memory (the ring, when the log is degraded). */
+export function overviewRowOf(event: XrayEvent): OverviewRow {
+  const data = (event.data ?? {}) as Record<string, unknown>;
+  const signature = (data.signature ?? null) as Record<string, unknown> | null;
+  const error = (data.error ?? null) as Record<string, unknown> | null;
+  const args = data.arguments;
+  return {
+    id: event.id,
+    ts: event.ts,
+    type: event.type,
+    xs: event.xs ?? null,
+    login_id: event.login_id ?? null,
+    grant_id: event.grant_id ?? null,
+    request_id: event.request_id ?? null,
+    client_name: asText(event.client?.name),
+    client_version: asText(event.client?.version),
+    tool: asText(data.tool),
+    duration_ms: asNumber(data.duration_ms),
+    is_error: asFlag(data.is_error),
+    status: asNumber(data.status),
+    rate_limited: asFlag(data.rate_limited),
+    user_agent: asText(data.user_agent),
+    anthropic_egress: asFlag(data.anthropic_egress),
+    sig_present: asFlag(signature?.present),
+    sig_verdict: asText(signature?.verdict),
+    sig_agent: asText(signature?.agent),
+    rationale_present: asFlag(data.rationale_present),
+    denied_reason: asText(data.denied_reason),
+    error_message:
+      event.type === 'protocol.error' ? asText(data.message) : asText(error?.message),
+    arguments:
+      event.type === 'tool.call.started' && args !== null && typeof args === 'object' && !Array.isArray(args)
+        ? (args as Record<string, unknown>)
+        : null,
+  };
+}
+
+const OVERVIEW_COLUMNS = `id, ts, type, xs, login_id, grant_id,
+  json_extract(envelope, '$.request_id') AS request_id,
+  json_extract(envelope, '$.client.name') AS client_name,
+  json_extract(envelope, '$.client.version') AS client_version,
+  json_extract(envelope, '$.data.tool') AS tool,
+  json_extract(envelope, '$.data.duration_ms') AS duration_ms,
+  json_extract(envelope, '$.data.is_error') AS is_error,
+  json_extract(envelope, '$.data.status') AS status,
+  json_extract(envelope, '$.data.rate_limited') AS rate_limited,
+  json_extract(envelope, '$.data.user_agent') AS user_agent,
+  json_extract(envelope, '$.data.anthropic_egress') AS anthropic_egress,
+  json_extract(envelope, '$.data.signature.present') AS sig_present,
+  json_extract(envelope, '$.data.signature.verdict') AS sig_verdict,
+  json_extract(envelope, '$.data.signature.agent') AS sig_agent,
+  json_extract(envelope, '$.data.rationale_present') AS rationale_present,
+  json_extract(envelope, '$.data.denied_reason') AS denied_reason,
+  CASE type
+    WHEN 'protocol.error' THEN json_extract(envelope, '$.data.message')
+    WHEN 'tool.call.completed' THEN json_extract(envelope, '$.data.error.message')
+  END AS error_message,
+  CASE type WHEN 'tool.call.started' THEN json_extract(envelope, '$.data.arguments') END AS arguments`;
+
+function overviewRowFromSql(row: Record<string, unknown>): OverviewRow {
+  let args: Record<string, unknown> | null = null;
+  if (typeof row.arguments === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(row.arguments);
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        args = parsed as Record<string, unknown>;
+      }
+    } catch {
+      args = null;
+    }
+  }
+  return {
+    id: Number(row.id),
+    ts: String(row.ts),
+    type: String(row.type),
+    xs: asText(row.xs),
+    login_id: asText(row.login_id),
+    grant_id: asText(row.grant_id),
+    request_id: row.request_id === null || row.request_id === undefined ? null : String(row.request_id),
+    client_name: asText(row.client_name),
+    client_version: asText(row.client_version),
+    tool: asText(row.tool),
+    duration_ms: asNumber(row.duration_ms),
+    is_error: asFlag(row.is_error),
+    status: asNumber(row.status),
+    rate_limited: asFlag(row.rate_limited),
+    user_agent: asText(row.user_agent),
+    anthropic_egress: asFlag(row.anthropic_egress),
+    sig_present: asFlag(row.sig_present),
+    sig_verdict: asText(row.sig_verdict),
+    sig_agent: asText(row.sig_agent),
+    rationale_present: asFlag(row.rationale_present),
+    denied_reason: asText(row.denied_reason),
+    error_message: asText(row.error_message),
+    arguments: args,
+  };
 }
 
 const SCHEMA = `
@@ -135,6 +294,12 @@ export function createNullEventLog(path = 'disabled'): EventLog {
       return [];
     },
     readById() {
+      return null;
+    },
+    readOverviewRows() {
+      return [];
+    },
+    oldestTs() {
       return null;
     },
     recent() {
@@ -355,6 +520,29 @@ export function createEventLog(options: EventLogOptions): EventLog {
           | Row
           | undefined;
         return row ? parseRow(row) : null;
+      });
+    },
+
+    readOverviewRows(sinceMs, afterId, limit, filter) {
+      return guard('readOverviewRows', [], () => {
+        const where = whereFor(filter);
+        const types = OVERVIEW_TYPES.map(() => '?').join(',');
+        const rows = database
+          .prepare(
+            `SELECT ${OVERVIEW_COLUMNS} FROM events WHERE ts_ms >= ? AND id > ? AND type IN (${types})${where.sql} ORDER BY id ASC LIMIT ?`,
+          )
+          .all(sinceMs, afterId, ...OVERVIEW_TYPES, ...where.parameters, limit) as Record<string, unknown>[];
+        return rows.map(overviewRowFromSql);
+      });
+    },
+
+    oldestTs(filter) {
+      return guard('oldestTs', null, () => {
+        const where = whereFor(filter);
+        const row = database
+          .prepare(`SELECT MIN(ts) AS value FROM events WHERE 1 = 1${where.sql}`)
+          .get(...where.parameters) as { value: string | null } | undefined;
+        return row?.value ?? null;
       });
     },
 

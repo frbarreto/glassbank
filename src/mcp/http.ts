@@ -12,6 +12,7 @@ import {
   captureRawRequest,
   isHttpObserved,
   markHttpObserved,
+  signatureCheckOf,
   type XrayCorrelation,
   type XrayEmitter,
   type XrayEventDataInput,
@@ -81,7 +82,8 @@ export function createMcpCors(config: McpHttpConfig): (request: Request, respons
     response.setHeader('Vary', 'Origin');
     response.setHeader(
       'Access-Control-Expose-Headers',
-      'WWW-Authenticate, x-request-id, mcp-protocol-version',
+      // `Accept-Signature` (v0.10, D-29): the Web Bot Auth invitation, readable by a browser client.
+      'WWW-Authenticate, x-request-id, mcp-protocol-version, Accept-Signature',
     );
     const origin = request.get('origin');
     if (origin === undefined || origin.length === 0) {
@@ -146,7 +148,15 @@ export function httpRequestFacts(
     // v0.9 (D-28): the request as it arrived, every header and the body bytes included. The
     // fields above are the categorised view of it; this is the record.
     raw: captureRawRequest(request),
+    // v0.10 (D-29): what `auth`'s Web Bot Auth middleware made of the signature, verified before
+    // the request reached this route. Absent when nothing was signed or invited.
+    ...signatureFacts(request),
   };
+}
+
+function signatureFacts(request: Request): { signature?: XrayEventDataInput<'http.request'>['signature'] } {
+  const check = signatureCheckOf(request);
+  return check === undefined ? {} : { signature: check };
 }
 
 export interface HttpObserverDeps {
